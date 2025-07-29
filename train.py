@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 # UPDATE: Change this to your brain tumor dataset path
-data_dir = r'C:\Users\Administrator\Downloads\brain_tumor_dataset'  
+data_dir = r'C:\Users\Administrator\Downloads\brain_tumor_dataset\Training'  
 
 # MODIFIED: Enhanced transforms for medical imaging
 train_transform = transforms.Compose([
@@ -46,7 +46,7 @@ val_size = len(full_dataset) - train_size
 train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
 # Apply validation transform to validation set
-val_dataset.dataset = datasets.ImageFolder(root=data_dir, transform=val_transform)
+val_dataset.dataset.transform = val_transform
 
 # Create DataLoaders
 train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)  # Smaller batch for medical data
@@ -57,7 +57,7 @@ class BrainTumorCNN(nn.Module):
     def __init__(self, num_classes):
         super(BrainTumorCNN, self).__init__()
         # Use ResNet50 instead of ResNet18 for better performance on medical data
-        self.base_model = models.resnet50(pretrained=True)
+        self.base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         
         # Unfreeze more layers for medical imaging fine-tuning
         for param in self.base_model.parameters():
@@ -135,7 +135,7 @@ def assess_medical_image_quality(data_dir, classes):
                     cv2.imwrite(img_path, enhanced)
 
 # Run image quality assessment and enhancement
-print("Assessing and enhancing medical image quality...")
+print("Assessing image quality...")
 assess_medical_image_quality(data_dir, full_dataset.classes)
 
 # Initialize the enhanced model
@@ -147,7 +147,7 @@ criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Label smoothing for bett
 optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-4)  # AdamW for medical data
 
 # Learning rate scheduler for medical imaging
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
 # Use GPU if available
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -158,7 +158,7 @@ model.to(device)
 num_epochs = 25  # More epochs for medical data
 best_val_accuracy = 0.0
 
-print("Starting brain tumor classification training...")
+print("Starting training...")
 for epoch in range(num_epochs):
     # Training phase
     model.train()
@@ -225,5 +225,5 @@ for epoch in range(num_epochs):
 
 # Save final model
 torch.save(model.state_dict(), 'brain_tumor_model_final.pth')
-print(f"Training completed! Best validation accuracy: {best_val_accuracy:.2f}%")
+print(f"Training completed. Best validation accuracy: {best_val_accuracy:.2f}%")
 print("Models saved: 'best_brain_tumor_model.pth' and 'brain_tumor_model_final.pth'")

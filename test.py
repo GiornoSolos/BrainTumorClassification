@@ -15,7 +15,7 @@ class BrainTumorCNN(nn.Module):
     def __init__(self, num_classes):
         super(BrainTumorCNN, self).__init__()
         # Match the enhanced model architecture from training
-        self.base_model = models.resnet50(pretrained=False)  # No pretrained weights needed for inference
+        self.base_model = models.resnet50(weights=None)  # No pretrained weights needed for inference
         
         # Enhanced classifier matching the training model
         num_features = self.base_model.fc.in_features
@@ -106,17 +106,17 @@ def plot_confusion_matrix(cm, class_names, save_path='confusion_matrix.png'):
 def print_medical_metrics(report, class_names):
     """Print detailed medical classification metrics"""
     print("\n" + "="*60)
-    print("DETAILED BRAIN TUMOR CLASSIFICATION METRICS")
+    print("DETAILED CLASSIFICATION METRICS")
     print("="*60)
     
     for class_name in class_names:
         if class_name in report:
             metrics = report[class_name]
             print(f"\n{class_name.upper()}:")
-            print(f"  Precision: {metrics['precision']:.3f} (How many predicted {class_name} were actually {class_name})")
-            print(f"  Recall:    {metrics['recall']:.3f} (How many actual {class_name} cases were correctly identified)")
-            print(f"  F1-Score:  {metrics['f1-score']:.3f} (Harmonic mean of precision and recall)")
-            print(f"  Support:   {metrics['support']} (Number of actual {class_name} cases)")
+            print(f"  Precision: {metrics['precision']:.3f}")
+            print(f"  Recall:    {metrics['recall']:.3f}")
+            print(f"  F1-Score:  {metrics['f1-score']:.3f}")
+            print(f"  Support:   {metrics['support']}")
     
     print(f"\nOVERALL METRICS:")
     print(f"  Macro Avg F1:    {report['macro avg']['f1-score']:.3f}")
@@ -133,7 +133,7 @@ class BrainTumorImageFolder(datasets.ImageFolder):
 def main():
     # Configuration - UPDATE THESE PATHS
     model_path = "best_brain_tumor_model.pth"  # Use the best model
-    test_data_dir = "testdata"  # Your brain tumor test data directory
+    test_data_dir = r'C:\Users\Administrator\Downloads\brain_tumor_dataset\Testing'
     
     # Brain tumor dataset typically has these classes - will auto-detect
     # Common classes: ['glioma', 'meningioma', 'notumor', 'pituitary']
@@ -176,7 +176,7 @@ def main():
     )
 
     # Print results
-    print(f"\n🧠 BRAIN TUMOR CLASSIFICATION RESULTS 🧠")
+    print(f"\nCLASSIFICATION RESULTS")
     print(f"Overall Accuracy: {accuracy:.2f}%")
     
     # Print detailed medical metrics
@@ -191,23 +191,22 @@ def main():
     for i, (image_path, pred_class, confidence) in enumerate(results[:10]):
         filename = os.path.basename(image_path)
         true_class = os.path.basename(os.path.dirname(image_path))
-        status = "✓ CORRECT" if pred_class == true_class else "✗ INCORRECT"
+        status = "CORRECT" if pred_class == true_class else "INCORRECT"
         print(f"{filename:30} | True: {true_class:12} | Pred: {pred_class:12} | Conf: {confidence:.3f} | {status}")
     
-    # Medical significance interpretation
-    print(f"\n📊 MEDICAL SIGNIFICANCE:")
+    # Performance interpretation
+    print(f"\nPERFORMANCE ASSESSMENT:")
     if accuracy >= 95:
-        print("🟢 EXCELLENT: Model shows clinical-grade accuracy suitable for medical assistance")
+        print("EXCELLENT: Model shows high accuracy suitable for medical assistance")
     elif accuracy >= 90:
-        print("🟡 GOOD: Model shows strong performance, suitable for screening with medical oversight")
+        print("GOOD: Model shows strong performance, suitable for screening")
     elif accuracy >= 85:
-        print("🟠 MODERATE: Model needs improvement before clinical application")
+        print("MODERATE: Model needs improvement before clinical application")
     else:
-        print("🔴 POOR: Model requires significant improvement for medical use")
+        print("POOR: Model requires significant improvement for medical use")
     
     print(f"\nDetailed results saved and confusion matrix plotted.")
-    print("This model could potentially assist radiologists in brain tumor screening,")
-    print("helping to save lives through faster and more accessible diagnosis.")
+    print("This model could assist in medical screening applications.")
 
 if __name__ == "__main__":
     main()
