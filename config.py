@@ -68,7 +68,7 @@ def setup_project():
     
     # Check if data exists
     if not os.path.exists(Config.TRAIN_DATA_DIR):
-        print("\n⚠️ Dataset not found!")
+        print("\n Dataset not found!")
         print("Please place your brain tumor dataset in:")
         print(f"  {Config.BASE_DATA_DIR}/")
         print("Expected structure:")
@@ -85,7 +85,7 @@ def setup_project():
         print("      └── pituitary/")
         return False
     
-    print("\n✅ Setup complete!")
+    print("\n Setup complete!")
     return True
 
 if __name__ == "__main__":
