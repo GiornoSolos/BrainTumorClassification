@@ -30,10 +30,16 @@ class BrainTumorCNN(nn.Module):
     def forward(self, x):
         return self.base_model(x)
 
-def load_brain_tumor_model(model_path, num_classes):
+def load_brain_tumor_model(model_path, num_classes, device):
     """Load the trained brain tumor detection model"""
     model = BrainTumorCNN(num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+    
+    # Load model weights with proper device mapping
+    if device.type == 'cuda':
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    else:
+        model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    
     model.eval()
     return model
 
@@ -49,8 +55,8 @@ def run_brain_tumor_inference(model, test_loader, class_names, device):
     total = 0
     
     with torch.no_grad():
-        for images, image_paths in test_loader:
-            images = images.to(device)
+        for batch_idx, (images, image_paths) in enumerate(test_loader):
+            images = images.to(device, non_blocking=True)  # Faster GPU transfer
             outputs = model(images)
             probabilities = torch.softmax(outputs, dim=1)
             _, predicted = torch.max(outputs, 1)
@@ -73,11 +79,15 @@ def run_brain_tumor_inference(model, test_loader, class_names, device):
                     # Handle unknown folder names
                     labels.append(0)  # Default to first class
                     
-            labels = torch.tensor(labels).to(device)
+            labels = torch.tensor(labels).to(device, non_blocking=True)
             all_labels.extend(labels.cpu().numpy())
             
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
+            
+            # Progress indicator for longer inference
+            if batch_idx % 10 == 0 and batch_idx > 0:
+                print(f"Processed {batch_idx * len(images)} images...", end='\r')
 
     accuracy = 100 * correct / total
     
@@ -91,8 +101,16 @@ def run_brain_tumor_inference(model, test_loader, class_names, device):
     
     return results, accuracy, report, cm, all_labels, all_predictions
 
-def plot_confusion_matrix(cm, class_names, save_path='confusion_matrix.png'):
+def plot_confusion_matrix(cm, class_names, save_path=None):
     """Plot and save confusion matrix"""
+    # Use config path if available, otherwise use default
+    if save_path is None:
+        try:
+            from config import Config
+            save_path = Config.CONFUSION_MATRIX_PATH
+        except ImportError:
+            save_path = 'confusion_matrix.png'
+    
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                 xticklabels=class_names, yticklabels=class_names)
@@ -101,6 +119,7 @@ def plot_confusion_matrix(cm, class_names, save_path='confusion_matrix.png'):
     plt.ylabel('True Label')
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Confusion matrix saved to: {save_path}")
     plt.show()
 
 def print_medical_metrics(report, class_names):
@@ -131,42 +150,101 @@ class BrainTumorImageFolder(datasets.ImageFolder):
         return original_tuple[0], path
 
 def main():
-    # Configuration - UPDATE THESE PATHS
-    model_path = "best_brain_tumor_model.pth"  # Use the best model
-    test_data_dir = r'C:\Users\Administrator\Downloads\brain_tumor_dataset\Testing'
-    
-    # Brain tumor dataset typically has these classes - will auto-detect
-    # Common classes: ['glioma', 'meningioma', 'notumor', 'pituitary']
-    # or ['no_tumor', 'tumor'] for binary classification
-    
-    # Medical imaging optimized transforms
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),   # Match training size
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # ImageNet normalization
-    ])
+    # Import config for portable paths
+    try:
+        from config import Config
+        Config.create_directories()
+        
+        # Use config paths
+        model_path = Config.BEST_MODEL_PATH
+        test_data_dir = Config.TEST_DATA_DIR
+        
+        print(f"Looking for test data at: {test_data_dir}")
+        
+        # Check if test data exists
+        if not os.path.exists(test_data_dir):
+            print(f"Test data directory not found: {test_data_dir}")
+            print("Please ensure your dataset is properly set up.")
+            print("Expected structure:")
+            print("  data/")
+            print("  └── Testing/")
+            print("      ├── glioma/")
+            print("      ├── meningioma/")
+            print("      ├── notumor/")
+            print("      └── pituitary/")
+            return
+            
+    except ImportError:
+        # Fallback to relative paths if config.py doesn't exist
+        print("Config file not found, using relative paths...")
+        model_path = "best_brain_tumor_model.pth"
+        test_data_dir = "./data/Testing"
+        
+        if not os.path.exists(test_data_dir):
+            print(f"Test data directory not found: {test_data_dir}")
+            print("Please create a 'data' folder with your dataset or update the path.")
+            return
 
-    # Load test dataset
+    # Medical imaging optimized transforms
+    try:
+        from config import Config
+        transform = transforms.Compose([
+            transforms.Resize(Config.IMAGE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(Config.IMAGENET_MEAN, Config.IMAGENET_STD)
+        ])
+    except ImportError:
+        # Fallback transforms if config.py doesn't exist
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    # Load test dataset with optimized DataLoader for GPU
     test_dataset = BrainTumorImageFolder(root=test_data_dir, transform=transform)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    
+    # Optimize batch size and workers based on device
+    if torch.cuda.is_available():
+        batch_size = 32  # Larger batch for GPU
+        num_workers = 4  # More workers for GPU
+    else:
+        batch_size = 16  # Smaller batch for CPU
+        num_workers = 2  # Fewer workers for CPU
+        
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, 
+                            num_workers=num_workers, pin_memory=torch.cuda.is_available())
     class_names = test_dataset.classes
     num_classes = len(class_names)
     
     print(f"Detected brain tumor classes: {class_names}")
     print(f"Number of test images: {len(test_dataset)}")
     
-    # Setup device
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    # Setup device with better GPU detection
+    if torch.cuda.is_available():
+        device = torch.device('cuda:0')
+        print(f"Using device: {device}")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    else:
+        device = torch.device('cpu')
+        print(f"Using device: {device}")
+        print("Note: CUDA not available, using CPU (this will be slower)")
     
     # Load model
     try:
-        model = load_brain_tumor_model(model_path, num_classes)
+        model = load_brain_tumor_model(model_path, num_classes, device)
         model.to(device)
-        print(f"Successfully loaded model from {model_path}")
+        
+        if torch.cuda.is_available():
+            print(f"Successfully loaded model from {model_path} (GPU accelerated)")
+        else:
+            print(f"Successfully loaded model from {model_path} (CPU only)")
+            
     except Exception as e:
         print(f"Error loading model: {e}")
         print("Make sure the model file exists and matches the number of classes")
+        print(f"Looking for model at: {model_path}")
         return
 
     # Run inference
