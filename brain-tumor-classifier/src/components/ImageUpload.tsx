@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import Image from 'next/image';
 import Link from 'next/link';
 
 interface PredictionResult {
@@ -82,11 +83,15 @@ export default function ImageUpload() {
 
       const result = await response.json();
       setResult(result);
-    } catch (err) {
+    } catch {
       setError('Failed to analyze image. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAnalyze = async (result: PredictionResult) => {
+    setResult(result);
   };
 
   const resetUpload = () => {
@@ -141,11 +146,6 @@ export default function ImageUpload() {
                 onChange={handleFileInput}
                 className="hidden"
                 id="file-upload"
-                ref={(input) => {
-                  if (input) {
-                    (window as any).fileInput = input;
-                  }
-                }}
               />
               <Button 
                 variant="outline" 
@@ -163,10 +163,12 @@ export default function ImageUpload() {
             <div className="space-y-6">
               {/* Image Preview */}
               <div className="relative">
-                <img
+                <Image
                   src={preview}
                   alt="MRI Preview"
-                  className="w-full max-w-md mx-auto rounded-lg shadow-lg"
+                  width={400}
+                  height={400}
+                  className="w-full max-w-md mx-auto rounded-lg shadow-lg object-contain"
                 />
                 <button
                   onClick={resetUpload}

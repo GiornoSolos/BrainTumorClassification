@@ -24,7 +24,7 @@ export default function ContactPage() {
             Get In Touch
           </Badge>
           <h1 className="text-4xl lg:text-6xl font-bold text-gray-900 dark:text-white">
-            Contact & Connect
+            Contact &amp; Connect
           </h1>
           <p className="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
             Questions about the brain tumor classification project, collaboration opportunities, 
@@ -132,7 +132,7 @@ export default function ContactPage() {
               </h3>
               <p className="text-gray-600 dark:text-gray-300">
                 The backend uses PyTorch for model training, converted to ONNX for web deployment. 
-                The frontend is built with Next.js, TypeScript, and Tailwind CSS, deployed on Vercel's edge network.
+                The frontend is built with Next.js, TypeScript, and Tailwind CSS, deployed on Vercel&apos;s edge network.
               </p>
             </div>
           </div>
