@@ -13,9 +13,9 @@ export default function Hero() {
           <span className="text-xl font-bold text-white">NeuroClassify</span>
         </div>
         <div className="hidden md:flex space-x-8">
-          <a href="#features" className="text-gray-300 hover:text-white transition-colors">Features</a>
-          <a href="#about" className="text-gray-300 hover:text-white transition-colors">About</a>
-          <a href="#contact" className="text-gray-300 hover:text-white transition-colors">Contact</a>
+          <Link href="/features" className="text-gray-300 hover:text-white transition-colors">Features</Link>
+          <Link href="/about" className="text-gray-300 hover:text-white transition-colors">About</Link>
+          <Link href="/contact" className="text-gray-300 hover:text-white transition-colors">Contact</Link>
         </div>
       </nav>
 
