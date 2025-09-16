@@ -136,12 +136,14 @@ export default function ImageUpload() {
                 className="hidden"
                 id="file-upload"
               />
-              <label htmlFor="file-upload">
-                <Button variant="outline" className="cursor-pointer">
-                  <FileImage className="mr-2 h-4 w-4" />
-                  Choose File
-                </Button>
-              </label>
+              <Button
+                variant="outline"
+                className="cursor-pointer"
+                onClick={() => document.getElementById('file-upload')?.click()}
+              >
+                <FileImage className="mr-2 h-4 w-4" />
+                Choose File
+              </Button>
               <p className="text-xs text-gray-400 mt-2">
                 Supports: JPG, PNG, DICOM • Max size: 10MB
               </p>
