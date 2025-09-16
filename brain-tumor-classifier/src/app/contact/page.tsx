@@ -85,7 +85,7 @@ export default function ContactPage() {
                 Professional networking and opportunities
               </p>
               <Button variant="outline" asChild className="w-full">
-                <a href="https://linkedin.com/in/yourprofile" target="_blank" rel="noopener noreferrer">
+                <a href="https://linkedin.com/in/your-actual-linkedin-username" target="_blank" rel="noopener noreferrer">
                   Connect
                   <ExternalLink className="ml-2 h-4 w-4" />
                 </a>
@@ -147,7 +147,7 @@ export default function ContactPage() {
               Experiencing technical issues with the brain tumor classifier or have suggestions for model improvements?
             </p>
             <Button asChild className="bg-blue-600 hover:bg-blue-700 text-white">
-              <a href="https://github.com/yourusername/BrainTumorClassification/issues" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/GiornoSolos/BrainTumorClassification/issues" target="_blank" rel="noopener noreferrer">
                 <Github className="mr-2 h-4 w-4" />
                 Report Issues
                 <ExternalLink className="ml-2 h-4 w-4" />
