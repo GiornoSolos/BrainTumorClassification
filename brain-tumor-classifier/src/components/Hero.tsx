@@ -50,13 +50,15 @@ export default function Hero() {
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
               </Link>
-              <Button 
-                variant="outline" 
-                size="lg" 
-                className="border-gray-600 text-gray-300 hover:bg-gray-800 px-8 py-4 text-lg"
-              >
-                View Research
-              </Button>
+              <Link href="/research">
+                <Button 
+                  variant="outline" 
+                  size="lg" 
+                  className="border-gray-600 text-gray-300 hover:bg-gray-800 px-8 py-4 text-lg"
+                >
+                  View Research
+                </Button>
+              </Link>
             </div>
 
             {/* Trust Indicators */}
