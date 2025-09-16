@@ -241,9 +241,5 @@ if __name__ == "__main__":
     
     if success:
         print("\n SUCCESS! model is ready for web deployment!")
-        print("\nNext steps:")
-        print("1. Update your API route (see instructions)")
-        print("2. Install Node.js packages: npm install onnxruntime-node sharp")
-        print("3. Deploy to Vercel")
     else:
         print("\n Conversion failed. Check the error messages above.")

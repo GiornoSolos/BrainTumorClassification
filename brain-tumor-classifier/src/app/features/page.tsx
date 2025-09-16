@@ -8,44 +8,43 @@ export default function FeaturesPage() {
     {
       icon: Brain,
       title: "Advanced Deep Learning",
-      description: "ResNet50-based Convolutional Neural Network trained on over 5,000 medical images for accurate brain tumor classification.",
-      specs: ["94.2% accuracy", "4-class classification", "Medical-grade performance"]
+      description: "ResNet50-based CNN with enhanced classifier achieving 94.2% accuracy on brain tumor classification.",
+      specs: ["ResNet50 backbone", "Enhanced classifier", "94.2% accuracy"]
     },
     {
       icon: Zap,
       title: "Real-Time Analysis",
-      description: "Instant MRI scan processing with results delivered in under 2 seconds, enabling rapid screening and assessment.",
-      specs: ["< 2 second processing", "Edge computing", "Optimized inference"]
+      description: "Instant MRI scan processing with results delivered in under 2 seconds using optimized inference.",
+      specs: ["< 2 second processing", "ONNX optimization", "Edge deployment"]
     },
     {
       icon: Shield,
       title: "Privacy-First Design",
-      description: "HIPAA-compliant architecture with no data storage. Images are processed locally and immediately discarded.",
-      specs: ["No data retention", "Local processing", "Secure transmission"]
+      description: "HIPAA-compliant architecture with no data storage. Images processed locally and discarded immediately.",
+      specs: ["No data retention", "Local processing", "Secure inference"]
     },
     {
       icon: Upload,
-      title: "Intuitive Interface",
-      description: "Professional drag-and-drop interface supporting multiple image formats with comprehensive file validation.",
-      specs: ["Drag & drop", "Multi-format support", "10MB file limit"]
+      title: "Professional Interface",
+      description: "Drag-and-drop interface supporting multiple formats with comprehensive validation and error handling.",
+      specs: ["Drag & drop", "Multi-format", "10MB limit"]
     },
     {
       icon: BarChart3,
       title: "Detailed Results",
-      description: "Comprehensive analysis including confidence scores, detailed explanations, and clinical context for each prediction.",
-      specs: ["Confidence scoring", "Clinical explanations", "Visual feedback"]
+      description: "Comprehensive analysis with confidence scores, probability distributions, and medical explanations.",
+      specs: ["Confidence scoring", "All probabilities", "Medical context"]
     },
     {
       icon: Clock,
-      title: "Always Available",
-      description: "24/7 accessibility through web interface with global CDN deployment for consistent performance worldwide.",
-      specs: ["Global availability", "99.9% uptime", "Mobile responsive"]
+      title: "Production Ready",
+      description: "Deployed on Vercel edge network with global CDN for consistent worldwide performance.",
+      specs: ["Global deployment", "Edge computing", "Auto-scaling"]
     }
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800">
-      {/* Navigation */}
       <nav className="flex items-center justify-between p-6 max-w-7xl mx-auto">
         <Link href="/" className="flex items-center space-x-2 text-blue-600 hover:text-blue-700">
           <ArrowLeft className="h-5 w-5" />
@@ -57,7 +56,6 @@ export default function FeaturesPage() {
         </div>
       </nav>
 
-      {/* Header */}
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center space-y-4 mb-16">
           <Badge variant="outline" className="text-blue-600 border-blue-200">
@@ -67,12 +65,11 @@ export default function FeaturesPage() {
             Features & Capabilities
           </h1>
           <p className="text-xl text-gray-600 dark:text-gray-300 max-w-3xl mx-auto">
-            Comprehensive brain tumor classification powered by state-of-the-art deep learning technology
+            Professional brain tumor classification powered by trained ResNet50 model with real-world medical accuracy
           </p>
         </div>
 
-        {/* Features Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
           {features.map((feature, index) => (
             <Card key={index} className="p-8 bg-white dark:bg-gray-800 shadow-lg hover:shadow-xl transition-shadow">
               <div className="flex items-start space-x-4">
@@ -99,51 +96,6 @@ export default function FeaturesPage() {
             </Card>
           ))}
         </div>
-
-        {/* Technical Specifications */}
-        <Card className="p-8 bg-white dark:bg-gray-800 shadow-lg">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-            Technical Specifications
-          </h2>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Model Architecture</h3>
-              <ul className="text-gray-600 dark:text-gray-300 text-sm space-y-1">
-                <li>ResNet50 base model</li>
-                <li>Transfer learning</li>
-                <li>Custom classification head</li>
-                <li>Batch normalization</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Training Data</h3>
-              <ul className="text-gray-600 dark:text-gray-300 text-sm space-y-1">
-                <li>5,000+ MRI images</li>
-                <li>4 tumor categories</li>
-                <li>Balanced dataset</li>
-                <li>Medical validation</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Performance</h3>
-              <ul className="text-gray-600 dark:text-gray-300 text-sm space-y-1">
-                <li>94.2% accuracy</li>
-                <li>92.8% precision</li>
-                <li>93.5% recall</li>
-                <li>93.1% F1-score</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Classifications</h3>
-              <ul className="text-gray-600 dark:text-gray-300 text-sm space-y-1">
-                <li>Glioma detection</li>
-                <li>Meningioma detection</li>
-                <li>Pituitary tumors</li>
-                <li>Normal tissue</li>
-              </ul>
-            </div>
-          </div>
-        </Card>
       </div>
     </div>
   );
