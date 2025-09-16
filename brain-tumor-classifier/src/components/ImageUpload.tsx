@@ -12,6 +12,12 @@ interface PredictionResult {
   class: string;
   confidence: number;
   explanation: string;
+  processing_time?: number;
+  all_probabilities?: Record<string, number>;
+  model_info?: {
+    architecture: string;
+    accuracy: string;
+  };
 }
 
 export default function ImageUpload() {
@@ -135,9 +141,14 @@ export default function ImageUpload() {
                 onChange={handleFileInput}
                 className="hidden"
                 id="file-upload"
+                ref={(input) => {
+                  if (input) {
+                    (window as any).fileInput = input;
+                  }
+                }}
               />
-              <Button
-                variant="outline"
+              <Button 
+                variant="outline" 
                 className="cursor-pointer"
                 onClick={() => document.getElementById('file-upload')?.click()}
               >
@@ -244,11 +255,43 @@ export default function ImageUpload() {
                   <div className="mt-1">
                     <div className="flex justify-between text-sm mb-1">
                       <span className="font-medium">{result.confidence.toFixed(1)}%</span>
-                      <span className="text-gray-500">Confidence</span>
+                      <span className="text-gray-500">Primary Prediction</span>
                     </div>
                     <Progress value={result.confidence} className="h-2" />
                   </div>
                 </div>
+
+                {result.all_probabilities && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2 block">
+                      All Probabilities
+                    </label>
+                    <div className="space-y-2">
+                      {Object.entries(result.all_probabilities).map(([className, probability]) => (
+                        <div key={className} className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">{className}</span>
+                          <div className="flex items-center space-x-2">
+                            <div className="w-20 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                              <div 
+                                className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                                style={{ width: `${probability}%` }}
+                              ></div>
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white w-12 text-right">
+                              {probability.toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {result.processing_time && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Analysis completed in {result.processing_time}ms
+                  </div>
+                )}
               </div>
 
               <div>

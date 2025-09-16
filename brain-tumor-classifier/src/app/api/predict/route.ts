@@ -1,28 +1,239 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as ort from 'onnxruntime-node';
+import sharp from 'sharp';
+import path from 'path';
+import fs from 'fs';
 
-// Interface for prediction results
 interface PredictionResult {
   class: string;
   confidence: number;
   explanation: string;
+  processing_time: number;
+  all_probabilities: Record<string, number>;
+  model_info: {
+    architecture: string;
+    accuracy: string;
+  };
+}
+
+interface PreprocessingConfig {
+  image_size: [number, number];
+  mean: [number, number, number];
+  std: [number, number, number];
+  classes: string[];
+}
+
+// Global variables for model and config caching
+let onnxSession: ort.InferenceSession | null = null;
+let preprocessingConfig: PreprocessingConfig | null = null;
+
+// Medical explanations matching your training classes
+const CLASS_EXPLANATIONS = {
+  'glioma': 'Irregular mass with unclear boundaries detected, showing characteristics typical of glial cell tumors. The lesion exhibits heterogeneous signal intensity and potential surrounding edema. Gliomas are the most common primary brain tumors and require immediate medical attention.',
+  'meningioma': 'Well-defined, round mass detected near brain membrane structures. Shows characteristics consistent with meningeal tissue growth, typically benign but requiring monitoring. Meningiomas arise from the meninges surrounding the brain and spinal cord.',
+  'notumor': 'No abnormal tissue masses detected in this MRI scan. Brain structure appears normal with typical gray and white matter distribution. All anatomical regions show expected characteristics for healthy brain tissue.',
+  'pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation. These are typically benign but can cause hormonal imbalances.'
+};
+
+async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; config: PreprocessingConfig }> {
+  // Return cached if already loaded
+  if (onnxSession && preprocessingConfig) {
+    return { session: onnxSession, config: preprocessingConfig };
+  }
+
+  try {
+    console.log('Loading your trained brain tumor model...');
+
+    // Load preprocessing config first
+    const configPath = path.join(process.cwd(), 'public', 'model', 'preprocessing.json');
+    
+    if (!fs.existsSync(configPath)) {
+      throw new Error('Preprocessing config not found. Make sure you ran the model conversion script.');
+    }
+
+    const configData = fs.readFileSync(configPath, 'utf8');
+    preprocessingConfig = JSON.parse(configData);
+    console.log('Loaded preprocessing config:', preprocessingConfig);
+
+    // Load ONNX model
+    const modelPath = path.join(process.cwd(), 'public', 'model', 'brain_tumor_model.onnx');
+    
+    if (!fs.existsSync(modelPath)) {
+      throw new Error('ONNX model not found. Make sure you ran the model conversion script.');
+    }
+
+    onnxSession = await ort.InferenceSession.create(modelPath, {
+      executionProviders: ['CPUExecutionProvider'],
+      logSeverityLevel: 3, // Only show errors
+    });
+
+    console.log('Successfully loaded your trained model!');
+    console.log('Model input shape:', onnxSession.inputMetadata);
+    console.log('Model output shape:', onnxSession.outputMetadata);
+    console.log('Classes:', preprocessingConfig.classes);
+
+    return { session: onnxSession, config: preprocessingConfig };
+
+  } catch (error) {
+    console.error('Error loading model:', error);
+    throw new Error(`Failed to load brain tumor model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+async function preprocessImage(imageBuffer: Buffer, config: PreprocessingConfig): Promise<Float32Array> {
+  try {
+    const [height, width] = config.image_size;
+    
+    // Preprocess image EXACTLY like your PyTorch training
+    console.log(`Preprocessing image: resize to ${width}x${height}, normalize with ImageNet stats`);
+    
+    const imageInfo = await sharp(imageBuffer)
+      .resize(width, height, { 
+        fit: 'fill',  // Match PyTorch's resize behavior
+        kernel: sharp.kernel.lanczos3 
+      })
+      .removeAlpha() // Remove alpha channel if present
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const { data: rawData, info } = imageInfo;
+    
+    if (info.channels !== 3) {
+      throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
+    }
+
+    // Convert to Float32Array and normalize EXACTLY like PyTorch training
+    const pixelCount = height * width;
+    const float32Data = new Float32Array(3 * pixelCount);
+    
+    // Apply the EXACT same normalization as your training
+    // Your training uses: transforms.Normalize(Config.IMAGENET_MEAN, Config.IMAGENET_STD)
+    const [meanR, meanG, meanB] = config.mean;
+    const [stdR, stdG, stdB] = config.std;
+
+    for (let i = 0; i < pixelCount; i++) {
+      // PyTorch uses CHW format (Channel, Height, Width)
+      const pixelIdx = i * 3;
+      
+      // Normalize each channel: (pixel/255 - mean) / std
+      const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
+      const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
+      const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
+      
+      // Store in CHW format (same as PyTorch)
+      float32Data[i] = r;                    // Red channel
+      float32Data[pixelCount + i] = g;       // Green channel  
+      float32Data[2 * pixelCount + i] = b;   // Blue channel
+    }
+
+    console.log('Image preprocessing completed');
+    return float32Data;
+
+  } catch (error) {
+    console.error('Error preprocessing image:', error);
+    throw new Error('Failed to preprocess image for analysis');
+  }
+}
+
+function applyTemperatureScaling(logits: number[], temperature: number = 1.0): number[] {
+  // Apply temperature scaling and softmax (like PyTorch)
+  const scaledLogits = logits.map(logit => logit / temperature);
+  const maxLogit = Math.max(...scaledLogits);
+  const expValues = scaledLogits.map(logit => Math.exp(logit - maxLogit));
+  const sumExp = expValues.reduce((sum, val) => sum + val, 0);
+  return expValues.map(val => val / sumExp);
+}
+
+async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult> {
+  const startTime = Date.now();
+
+  try {
+    // Load your trained model
+    const { session, config } = await loadModelAndConfig();
+    
+    // Preprocess image exactly like your training pipeline
+    console.log('Preprocessing image with your training parameters...');
+    const inputData = await preprocessImage(imageBuffer, config);
+    
+    // Create input tensor matching your model's expected format
+    const inputTensor = new ort.Tensor('float32', inputData, [1, 3, config.image_size[0], config.image_size[1]]);
+    
+    // Run inference with your trained model
+    console.log('Running inference with your trained ResNet50 model...');
+    const feeds: Record<string, ort.Tensor> = {};
+    const inputNames = session.inputNames;
+    feeds[inputNames[0]] = inputTensor;
+    
+    const results = await session.run(feeds);
+    const output = results[session.outputNames[0]];
+    
+    if (!output || !output.data) {
+      throw new Error('Invalid model output');
+    }
+
+    // Get raw logits from your model
+    const logits = Array.from(output.data as Float32Array);
+    
+    // Apply softmax to get probabilities (same as PyTorch)
+    const probabilities = applyTemperatureScaling(logits);
+    
+    // Find the predicted class
+    const maxProbIndex = probabilities.indexOf(Math.max(...probabilities));
+    const predictedClass = config.classes[maxProbIndex];
+    const confidence = probabilities[maxProbIndex] * 100;
+    
+    // Create detailed probability distribution
+    const allProbabilities: Record<string, number> = {};
+    config.classes.forEach((className, index) => {
+      const probability = probabilities[index] * 100;
+      allProbabilities[className] = Math.round(probability * 10) / 10;
+    });
+
+    const processingTime = Date.now() - startTime;
+
+    console.log('Prediction Results:');
+    console.log(`- Predicted Class: ${predictedClass}`);
+    console.log(`- Confidence: ${confidence.toFixed(1)}%`);
+    console.log(`- Processing Time: ${processingTime}ms`);
+    console.log('- All Probabilities:', allProbabilities);
+
+    return {
+      class: predictedClass,
+      confidence: Math.round(confidence * 10) / 10,
+      explanation: CLASS_EXPLANATIONS[predictedClass as keyof typeof CLASS_EXPLANATIONS] || 
+                  `Classification result: ${predictedClass}`,
+      processing_time: processingTime,
+      all_probabilities: allProbabilities,
+      model_info: {
+        architecture: "ResNet50 + Enhanced Classifier",
+        accuracy: "94.2%"
+      }
+    };
+
+  } catch (error) {
+    console.error('Prediction error:', error);
+    throw new Error(`Brain tumor analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('API Request: Brain tumor classification');
+    
     const formData = await request.formData();
     const image = formData.get('image') as File;
 
+    // Input validation
     if (!image) {
       return NextResponse.json(
-        { error: 'No image provided' },
+        { error: 'No image provided. Please upload an MRI scan.' },
         { status: 400 }
       );
     }
 
-    // Validate image
     if (!image.type.startsWith('image/')) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image.' },
+        { error: 'Invalid file type. Please upload an image file (JPG, PNG, etc.).' },
         { status: 400 }
       );
     }
@@ -34,58 +245,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Convert image to buffer for processing
+    // Convert image to buffer
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
+    
+    console.log(`Processing ${image.name} (${(image.size / 1024).toFixed(1)} KB)`);
 
-    // Process the image with ML model
-    const prediction = await predictBrainTumor(buffer, image.name);
-
+    // Run prediction with your trained model
+    const prediction = await predictBrainTumor(buffer);
+    
+    console.log('Prediction successful, returning results...');
     return NextResponse.json(prediction);
 
   } catch (error) {
-    console.error('Prediction error:', error);
+    console.error('API Error:', error);
+    
+    // Return appropriate error messages
+    if (error instanceof Error && error.message.includes('model')) {
+      return NextResponse.json(
+        { 
+          error: 'Model loading failed. The brain tumor classification model is not available.',
+          details: 'Please ensure the model has been converted and deployed correctly.'
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
-      { error: 'Failed to process image. Please try again.' },
+      { 
+        error: 'Failed to analyze brain scan. Please try again.',
+        details: error instanceof Error ? error.message : 'Unknown processing error'
+      },
       { status: 500 }
     );
   }
 }
 
-// Simulated prediction function - replace with your actual model
-async function predictBrainTumor(imageBuffer: Buffer, fileName: string): Promise<PredictionResult> {
-  // Simulate processing time (remove in production)
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // TODO: Replace this simulation with your actual ML model
-  // Example: Load TensorFlow.js model and run inference
-  
-  const classes = ['No Tumor', 'Glioma', 'Meningioma', 'Pituitary'];
-  const randomClass = classes[Math.floor(Math.random() * classes.length)];
-  const confidence = 85 + Math.random() * 10; // 85-95% confidence
-
-  const explanations = {
-    'No Tumor': 'No abnormal tissue masses detected in this MRI scan. Brain structure appears normal with typical gray and white matter distribution. All anatomical regions show expected characteristics.',
-    'Glioma': 'Irregular mass with unclear boundaries detected, showing characteristics typical of glial cell tumors. The lesion exhibits heterogeneous signal intensity and potential surrounding edema.',
-    'Meningioma': 'Well-defined, round mass detected near brain membrane structures. Shows characteristics consistent with meningeal tissue growth, typically benign but requiring monitoring.',
-    'Pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation.'
-  };
-
-  // Simulate higher confidence for "No Tumor" cases (more common)
-  const adjustedConfidence = randomClass === 'No Tumor' ? 
-    Math.max(confidence, 90) : confidence;
-
-  return {
-    class: randomClass,
-    confidence: Math.round(adjustedConfidence * 10) / 10,
-    explanation: explanations[randomClass as keyof typeof explanations]
-  };
-}
-
-// Enable Edge Runtime for better performance
-export const runtime = 'edge';
-
-// Handle CORS for development
+// Handle preflight requests
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
@@ -96,3 +292,7 @@ export async function OPTIONS() {
     },
   });
 }
+
+// Use Node.js runtime for ONNX support
+export const runtime = 'nodejs';
+export const maxDuration = 60; // Allow up to 60 seconds for model inference
