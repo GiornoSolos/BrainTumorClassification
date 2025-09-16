@@ -45,8 +45,8 @@ export default function ContactPage() {
                 For project questions, collaboration, or technical discussions
               </p>
               <Button variant="outline" asChild className="w-full">
-                <a href="mailto:your.email@example.com">
-                  your.email@example.com
+                <a href="mailto:marco.mojicevic@gmail.com">
+                  marco.mojicevic@gmail.com
                   <ExternalLink className="ml-2 h-4 w-4" />
                 </a>
               </Button>
@@ -65,7 +65,7 @@ export default function ContactPage() {
                 View source code, contribute, or report issues
               </p>
               <Button variant="outline" asChild className="w-full">
-                <a href="https://github.com/yourusername/BrainTumorClassification" target="_blank" rel="noopener noreferrer">
+                <a href="https://github.com/GiornoSolos/BrainTumorClassification/tree/main" target="_blank" rel="noopener noreferrer">
                   View Repository
                   <ExternalLink className="ml-2 h-4 w-4" />
                 </a>
