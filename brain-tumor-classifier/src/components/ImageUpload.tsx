@@ -83,7 +83,8 @@ export default function ImageUpload() {
 
       const result = await response.json();
       setResult(result);
-    } catch {
+    } catch (error) {
+      console.error('Analysis error:', error);
       setError('Failed to analyze image. Please try again.');
     } finally {
       setLoading(false);
@@ -308,7 +309,7 @@ export default function ImageUpload() {
 
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                 This tool is for research purposes only and should not be used for medical diagnosis. 
+                This tool is for research purposes only and should not be used for medical diagnosis. 
                 Please consult a qualified healthcare professional for medical advice.
               </p>
             </div>
