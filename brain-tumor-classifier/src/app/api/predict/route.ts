@@ -13,6 +13,11 @@ interface PredictionResult {
   };
 }
 
+interface HuggingFaceResult {
+  label: string;
+  score: number;
+}
+
 // Initialize Hugging Face client
 const hf = new HfInference(process.env.HUGGINGFACE_API_TOKEN);
 
@@ -46,56 +51,53 @@ async function classifyBrainTumor(imageBuffer: Buffer): Promise<PredictionResult
     console.log('Model ID:', MODEL_ID);
     console.log('Image buffer size:', imageBuffer.length);
     
-    // Try multiple approaches for image data
-    let result;
+    let result: HuggingFaceResult[];
     
     try {
-      // Method 1: Direct buffer (most reliable)
-      console.log('Trying direct buffer approach...');
-      result = await hf.imageClassification({
-        data: imageBuffer,
-        model: MODEL_ID,
-        options: {
-          wait_for_model: true,
-          use_cache: false
-        }
-      });
-    } catch (bufferError) {
-      console.log('Direct buffer failed, trying Blob approach...');
+      // Method 1: Try Hugging Face client with proper format
+      console.log('Trying Hugging Face client...');
+      const uint8Array = new Uint8Array(imageBuffer);
+      const imageBlob = new Blob([uint8Array], { type: 'image/jpeg' });
       
-      try {
-        // Method 2: Convert to Blob
-        const imageBlob = new Blob([imageBuffer], { type: 'image/jpeg' });
-        result = await hf.imageClassification({
-          data: imageBlob,
-          model: MODEL_ID,
-          options: {
-            wait_for_model: true,
-            use_cache: false
-          }
-        });
-      } catch (blobError) {
-        console.log('Blob approach failed, trying direct fetch...');
-        
-        // Method 3: Direct fetch to Hugging Face API
-        const response = await fetch(
-          `https://api-inference.huggingface.co/models/${MODEL_ID}`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
-              'Content-Type': 'application/octet-stream',
-            },
-            body: imageBuffer,
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`API request failed: ${response.status}`);
+      result = await hf.imageClassification({
+        data: imageBlob,
+        model: MODEL_ID
+      });
+    } catch (clientError) {
+      console.log('Hugging Face client failed, trying direct fetch...');
+      
+      // Method 2: Direct fetch to Hugging Face API
+      const uint8Array = new Uint8Array(imageBuffer);
+      const response = await fetch(
+        `https://api-inference.huggingface.co/models/${MODEL_ID}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+            'Content-Type': 'application/octet-stream',
+          },
+          body: uint8Array,
         }
+      );
 
-        result = await response.json();
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Hugging Face API error:', response.status, errorText);
+        
+        if (response.status === 404) {
+          throw new Error('Model not found. Please check your model ID.');
+        } else if (response.status === 401) {
+          throw new Error('Authentication failed. Please check your API token.');
+        } else if (response.status === 429) {
+          throw new Error('Rate limit exceeded. Please try again later.');
+        } else if (response.status === 503) {
+          throw new Error('Model is loading. Please try again in a few moments.');
+        } else {
+          throw new Error(`API request failed: ${response.status} ${errorText}`);
+        }
       }
+
+      result = await response.json();
     }
 
     console.log('Hugging Face result:', result);
@@ -124,7 +126,7 @@ async function classifyBrainTumor(imageBuffer: Buffer): Promise<PredictionResult
     };
 
     // Fill in probabilities from Hugging Face results
-    result.forEach(prediction => {
+    result.forEach((prediction: HuggingFaceResult) => {
       let className = prediction.label.toLowerCase();
       if (LABEL_MAPPING[prediction.label]) {
         className = LABEL_MAPPING[prediction.label];
@@ -240,5 +242,4 @@ export async function OPTIONS() {
   });
 }
 
-// No runtime restrictions needed for Hugging Face API calls
 export const maxDuration = 30;
