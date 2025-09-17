@@ -42,49 +42,34 @@ const CLASS_EXPLANATIONS = {
   'pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation. These tumors can impact various bodily functions.'
 };
 
+
+// URL to download the ONNX model if not bundled
+const MODEL_URL = "https://github.com/GiornoSolos/BrainTumorClassification/releases/download/v1.0.0/brain_tumor_model.onnx";
+
+
 async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; config: PreprocessingConfig }> {
   if (onnxSession) {
     return { session: onnxSession, config: PREPROCESSING_CONFIG };
   }
 
   try {
-    console.log('Loading ONNX model for brain tumor classification');
+    console.log('Loading ONNX model from external URL');
 
     const config = PREPROCESSING_CONFIG;
     console.log('Using embedded preprocessing configuration:', config);
 
-    // Model file path options for different deployment environments
-    const possiblePaths = [
-      path.join(process.cwd(), 'public', 'model', 'brain_tumor_model.onnx'),
-      path.join(process.cwd(), 'model', 'brain_tumor_model.onnx'),
-      './public/model/brain_tumor_model.onnx',
-      './model/brain_tumor_model.onnx'
-    ];
-
-    let modelPath: string | null = null;
+    // Download model from GitHub Releases
+    console.log('Downloading model from:', MODEL_URL);
+    const response = await fetch(MODEL_URL);
     
-    for (const testPath of possiblePaths) {
-      console.log(`Checking model path: ${testPath}`);
-      if (fs.existsSync(testPath)) {
-        modelPath = testPath;
-        console.log(`Model located at: ${modelPath}`);
-        break;
-      }
+    if (!response.ok) {
+      throw new Error(`Failed to download model: ${response.status} ${response.statusText}`);
     }
+    
+    const modelBuffer = await response.arrayBuffer();
+    console.log(`Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
 
-    if (!modelPath) {
-      // Debug file system structure
-      console.log('Available files in process.cwd():', fs.readdirSync(process.cwd()));
-      if (fs.existsSync(path.join(process.cwd(), 'public'))) {
-        console.log('Files in public:', fs.readdirSync(path.join(process.cwd(), 'public')));
-        if (fs.existsSync(path.join(process.cwd(), 'public', 'model'))) {
-          console.log('Files in public/model:', fs.readdirSync(path.join(process.cwd(), 'public', 'model')));
-        }
-      }
-      throw new Error('ONNX model not found in expected deployment locations');
-    }
-
-    onnxSession = await ort.InferenceSession.create(modelPath, {
+    onnxSession = await ort.InferenceSession.create(modelBuffer, {
       executionProviders: ['CPUExecutionProvider'],
       logSeverityLevel: 3,
     });
