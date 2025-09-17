@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as ort from 'onnxruntime-node';
-import sharp from 'sharp';
+import { HfInference } from '@huggingface/inference';
 
 interface PredictionResult {
   class: string;
@@ -14,24 +13,11 @@ interface PredictionResult {
   };
 }
 
-interface PreprocessingConfig {
-  image_size: [number, number];
-  mean: [number, number, number];
-  std: [number, number, number];
-  classes: string[];
-}
+// Initialize Hugging Face client
+const hf = new HfInference(process.env.HUGGINGFACE_API_TOKEN);
 
-// External model URL
-const MODEL_URL = "https://github.com/GiornoSolos/BrainTumorClassification/releases/download/v1.0.0/brain_tumor_model.onnx";
-
-const PREPROCESSING_CONFIG: PreprocessingConfig = {
-  image_size: [224, 224],
-  mean: [0.485, 0.456, 0.406],
-  std: [0.229, 0.224, 0.225],
-  classes: ['glioma', 'meningioma', 'notumor', 'pituitary']
-};
-
-let onnxSession: ort.InferenceSession | null = null;
+// Your model ID from Hugging Face Hub
+const MODEL_ID = process.env.HUGGINGFACE_MODEL_ID || "yourusername/brain-tumor-classifier";
 
 const CLASS_EXPLANATIONS = {
   'glioma': 'Irregular mass with unclear boundaries detected, showing characteristics typical of glial cell tumors. The lesion exhibits heterogeneous signal intensity and potential surrounding edema. Gliomas are primary brain tumors requiring immediate medical evaluation.',
@@ -40,131 +26,68 @@ const CLASS_EXPLANATIONS = {
   'pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation. These tumors can impact various bodily functions.'
 };
 
-async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; config: PreprocessingConfig }> {
-  if (onnxSession) {
-    return { session: onnxSession, config: PREPROCESSING_CONFIG };
-  }
+// Map common label variations to our standard names
+const LABEL_MAPPING: Record<string, string> = {
+  'LABEL_0': 'glioma',
+  'LABEL_1': 'meningioma', 
+  'LABEL_2': 'notumor',
+  'LABEL_3': 'pituitary',
+  '0': 'glioma',
+  '1': 'meningioma',
+  '2': 'notumor', 
+  '3': 'pituitary'
+};
 
-  try {
-    console.log('Loading ONNX model from external URL with onnxruntime-node');
-
-    // Download model with memory optimization
-    const response = await fetch(MODEL_URL);
-    if (!response.ok) {
-      throw new Error(`Failed to download model: ${response.status}`);
-    }
-    
-    const modelBuffer = await response.arrayBuffer();
-    console.log(`Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
-
-    // Create session with onnxruntime-node optimized for Vercel
-    onnxSession = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['cpu'],
-      enableCpuMemArena: false, // Disable memory arena to reduce memory usage
-      enableMemPattern: false,  // Disable memory pattern optimization to save memory
-      executionMode: 'sequential', // Use sequential execution to save memory
-      graphOptimizationLevel: 'basic', // Use basic optimization to save memory
-    });
-
-    console.log('ONNX session created successfully with onnxruntime-node');
-    
-    // Force garbage collection if available (helps with memory management)
-    if (global.gc) {
-      global.gc();
-    }
-    
-    return { session: onnxSession, config: PREPROCESSING_CONFIG };
-
-  } catch (error) {
-    console.error('Model loading error:', error);
-    throw new Error(`Failed to load model: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function preprocessImage(imageBuffer: Buffer, config: PreprocessingConfig): Promise<Float32Array> {
-  const [height, width] = config.image_size;
-  
-  try {
-    const imageInfo = await sharp(imageBuffer)
-      .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-
-    const { data: rawData, info } = imageInfo;
-    
-    if (info.channels !== 3) {
-      throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
-    }
-
-    const pixelCount = height * width;
-    const float32Data = new Float32Array(3 * pixelCount);
-    const [meanR, meanG, meanB] = config.mean;
-    const [stdR, stdG, stdB] = config.std;
-
-    // Optimized preprocessing loop
-    for (let i = 0; i < pixelCount; i++) {
-      const pixelIdx = i * 3;
-      const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
-      const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
-      const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
-      
-      float32Data[i] = r;
-      float32Data[pixelCount + i] = g;
-      float32Data[2 * pixelCount + i] = b;
-    }
-
-    return float32Data;
-  } catch (error) {
-    console.error('Image preprocessing error:', error);
-    throw new Error('Failed to preprocess image');
-  }
-}
-
-function applyTemperatureScaling(logits: number[], temperature: number = 1.0): number[] {
-  const scaledLogits = logits.map(logit => logit / temperature);
-  const maxLogit = Math.max(...scaledLogits);
-  const expValues = scaledLogits.map(logit => Math.exp(logit - maxLogit));
-  const sumExp = expValues.reduce((sum, val) => sum + val, 0);
-  return expValues.map(val => val / sumExp);
-}
-
-async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult> {
+async function classifyBrainTumor(imageBuffer: Buffer): Promise<PredictionResult> {
   const startTime = Date.now();
 
   try {
-    const { session, config } = await loadModelAndConfig();
-    const inputData = await preprocessImage(imageBuffer, config);
+    console.log('Sending image to Hugging Face for classification...');
     
-    // Create tensor with proper dimensions
-    const inputTensor = new ort.Tensor('float32', inputData, [1, 3, config.image_size[0], config.image_size[1]]);
-    const feeds = { [session.inputNames[0]]: inputTensor };
-    
-    // Run inference
-    const results = await session.run(feeds);
-    const output = results[session.outputNames[0]];
-    
-    if (!output || !output.data) {
-      throw new Error('Invalid model output received');
+    // Use Hugging Face Inference API
+    const result = await hf.imageClassification({
+      data: imageBuffer,
+      model: MODEL_ID
+    });
+
+    console.log('Hugging Face result:', result);
+
+    if (!result || result.length === 0) {
+      throw new Error('No classification results received from Hugging Face');
     }
 
-    const logits = Array.from(output.data as Float32Array);
-    const probabilities = applyTemperatureScaling(logits);
+    // Process results from Hugging Face
+    const topPrediction = result[0];
+    let predictedClass = topPrediction.label.toLowerCase();
     
-    const maxProbIndex = probabilities.indexOf(Math.max(...probabilities));
-    const predictedClass = config.classes[maxProbIndex];
-    const confidence = probabilities[maxProbIndex] * 100;
-    
-    const allProbabilities: Record<string, number> = {};
-    config.classes.forEach((className, index) => {
-      allProbabilities[className] = Math.round(probabilities[index] * 100 * 10) / 10;
+    // Map labels if needed
+    if (LABEL_MAPPING[topPrediction.label]) {
+      predictedClass = LABEL_MAPPING[topPrediction.label];
+    }
+
+    const confidence = topPrediction.score * 100;
+
+    // Create all probabilities object
+    const allProbabilities: Record<string, number> = {
+      'glioma': 0,
+      'meningioma': 0,
+      'notumor': 0,
+      'pituitary': 0
+    };
+
+    // Fill in probabilities from Hugging Face results
+    result.forEach(prediction => {
+      let className = prediction.label.toLowerCase();
+      if (LABEL_MAPPING[prediction.label]) {
+        className = LABEL_MAPPING[prediction.label];
+      }
+      
+      if (allProbabilities.hasOwnProperty(className)) {
+        allProbabilities[className] = Math.round(prediction.score * 100 * 10) / 10;
+      }
     });
 
     const processingTime = Date.now() - startTime;
-
-    // Clean up tensors to free memory
-    inputTensor.dispose?.();
-    output.dispose?.();
 
     return {
       class: predictedClass,
@@ -174,19 +97,39 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
       processing_time: processingTime,
       all_probabilities: allProbabilities,
       model_info: {
-        architecture: "ResNet50 + Enhanced Classifier",
+        architecture: "ResNet50 + Enhanced Classifier (Hugging Face)",
         accuracy: "94.2%"
       }
     };
 
   } catch (error) {
-    console.error('Prediction error:', error);
-    throw new Error(`Prediction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Hugging Face classification error:', error);
+    
+    // Handle common Hugging Face errors
+    if (error instanceof Error) {
+      if (error.message.includes('Model not found')) {
+        throw new Error('Brain tumor classification model not found. Please check model deployment.');
+      } else if (error.message.includes('rate limit')) {
+        throw new Error('Service temporarily unavailable due to high demand. Please try again in a moment.');
+      } else if (error.message.includes('authentication')) {
+        throw new Error('Model authentication failed. Please check configuration.');
+      }
+    }
+    
+    throw new Error(`Classification failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    // Check for required environment variables
+    if (!process.env.HUGGINGFACE_API_TOKEN) {
+      return NextResponse.json(
+        { error: 'Hugging Face API token not configured' }, 
+        { status: 500 }
+      );
+    }
+
     const formData = await request.formData();
     const image = formData.get('image') as File;
 
@@ -205,19 +148,17 @@ export async function POST(request: NextRequest) {
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     
-    const prediction = await predictBrainTumor(buffer);
-    
-    // Force garbage collection if available
-    if (global.gc) {
-      global.gc();
-    }
+    const prediction = await classifyBrainTumor(buffer);
     
     return NextResponse.json(prediction);
 
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json(
-      { error: 'Analysis failed', details: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        error: 'Analysis failed', 
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      },
       { status: 500 }
     );
   }
@@ -234,5 +175,5 @@ export async function OPTIONS() {
   });
 }
 
-export const runtime = 'nodejs';
-export const maxDuration = 60;
+// No runtime restrictions needed for Hugging Face API calls
+export const maxDuration = 30;
