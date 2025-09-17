@@ -78,13 +78,15 @@ export default function ImageUpload() {
       });
 
       if (!response.ok) {
-        throw new Error('Analysis failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.details || 'Analysis failed');
       }
 
       const result = await response.json();
       setResult(result);
-    } catch {
-      setError('Failed to analyze image. Please try again.');
+    } catch (error) {
+      console.error('Analysis error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to analyze image. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -238,7 +240,7 @@ export default function ImageUpload() {
                   </label>
                   <div className="flex items-center space-x-2 mt-1">
                     <Badge
-                      variant={result.class === 'No Tumor' ? 'default' : 'destructive'}
+                      variant={result.class === 'notumor' ? 'default' : 'destructive'}
                       className="text-lg px-3 py-1"
                     >
                       {result.class}
@@ -267,7 +269,7 @@ export default function ImageUpload() {
                     <div className="space-y-2">
                       {Object.entries(result.all_probabilities).map(([className, probability]) => (
                         <div key={className} className="flex justify-between items-center">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">{className}</span>
+                          <span className="text-sm text-gray-600 dark:text-gray-400 capitalize">{className}</span>
                           <div className="flex items-center space-x-2">
                             <div className="w-20 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                               <div 
@@ -304,7 +306,7 @@ export default function ImageUpload() {
 
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                 This tool is for research purposes only and should not be used for medical diagnosis. 
+                This tool is for research purposes only and should not be used for medical diagnosis. 
                 Please consult a qualified healthcare professional for medical advice.
               </p>
             </div>
