@@ -1,24 +1,95 @@
 #!/usr/bin/env python
 """
-Convert Brain Tumor PyTorch model to Hugging Face format
+Convert Brain Tumor PyTorch model to Hugging Face Transformers format
 """
 
 import torch
 import torch.nn as nn
 from torchvision import models
+from transformers import PreTrainedModel, PretrainedConfig, AutoImageProcessor
 from huggingface_hub import HfApi, create_repo
 from PIL import Image
 import json
 import os
 from pathlib import Path
 
-class BrainTumorCNN(nn.Module):
-    """Model architecture matching training implementation"""
-    def __init__(self, num_classes=4):
-        super(BrainTumorCNN, self).__init__()
-        self.base_model = models.resnet50(weights=None)
+class BrainTumorConfig(PretrainedConfig):
+    """Configuration class for Brain Tumor model"""
+    model_type = "brain-tumor-classifier"
+    
+    def __init__(
+        self,
+        num_classes=4,
+        hidden_size=512,
+        dropout_rate=0.5,
+        dropout_rate_final=0.3,
+        image_size=224,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.num_classes = num_classes
+        self.hidden_size = hidden_size
+        self.dropout_rate = dropout_rate
+        self.dropout_rate_final = dropout_rate_final
+        self.image_size = image_size
+
+class BrainTumorForImageClassification(PreTrainedModel):
+    """Brain Tumor Classification model compatible with Transformers"""
+    config_class = BrainTumorConfig
+    
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_classes = config.num_classes
         
-        # Enhanced classifier configuration
+        # Create ResNet50 backbone
+        self.backbone = models.resnet50(weights=None)
+        
+        # Remove original classifier
+        num_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Identity()
+        
+        # Create enhanced classifier matching training code
+        self.classifier = nn.Sequential(
+            nn.Dropout(config.dropout_rate),
+            nn.Linear(num_features, config.hidden_size),
+            nn.ReLU(),
+            nn.Dropout(config.dropout_rate_final),
+            nn.Linear(config.hidden_size, config.num_classes)
+        )
+        
+    def forward(self, pixel_values, labels=None):
+        # Extract features from backbone
+        features = self.backbone(pixel_values)
+        
+        # Classify
+        logits = self.classifier(features)
+        
+        loss = None
+        if labels is not None:
+            loss_fn = nn.CrossEntropyLoss()
+            loss = loss_fn(logits, labels)
+            
+        return {
+            "loss": loss,
+            "logits": logits
+        }
+
+# Original model class for loading trained weights
+class BrainTumorCNN(nn.Module):
+    def __init__(self, num_classes):
+        super(BrainTumorCNN, self).__init__()
+        self.base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+        
+        # Match training unfreezing pattern
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+            
+        for param in self.base_model.layer4.parameters():
+            param.requires_grad = True
+        for param in self.base_model.layer3.parameters():
+            param.requires_grad = True
+            
+        # Enhanced classifier matching training
         num_features = self.base_model.fc.in_features
         self.base_model.fc = nn.Sequential(
             nn.Dropout(0.5),
@@ -31,89 +102,118 @@ class BrainTumorCNN(nn.Module):
     def forward(self, x):
         return self.base_model(x)
 
-def create_hf_model_files():
-    """Convert and prepare model for Hugging Face deployment"""
+def convert_to_transformers_model():
+    """Convert trained PyTorch model to Transformers format"""
     
     # Configuration
-    HF_USERNAME = "GiornoSolos"  # Update with actual username
+    HF_USERNAME = "GiornoSolos"
     MODEL_NAME = "brain-tumor-classifier"
     REPO_ID = f"{HF_USERNAME}/{MODEL_NAME}"
     
-    # Setup local directory for model files
+    # Class names
+    class_names = ["glioma", "meningioma", "notumor", "pituitary"]
+    num_classes = len(class_names)
+    
+    # Setup paths
     model_dir = Path("./hf_model")
     model_dir.mkdir(exist_ok=True)
     
-    print("Converting Brain Tumor Model to Hugging Face Format")
-    print("=" * 50)
-    
-    # Load trained PyTorch model
     try:
         from config import Config
         model_path = Config.BEST_MODEL_PATH
-        class_names = Config.CLASS_NAMES
     except ImportError:
         model_path = "models/best_brain_tumor_model.pth"
-        class_names = ["glioma", "meningioma", "notumor", "pituitary"]
     
     if not os.path.exists(model_path):
-        print(f"Model not found at {model_path}")
-        print("Train the model first or update the path")
+        print(f"ERROR: Model file not found at {model_path}")
         return False
     
-    print(f"Loading model from: {model_path}")
+    print(f"Converting model from: {model_path}")
     
-    # Initialize and load model
-    model = BrainTumorCNN(num_classes=len(class_names))
+    # Load original trained model
+    original_model = BrainTumorCNN(num_classes)
     checkpoint = torch.load(model_path, map_location='cpu')
     
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        original_model.load_state_dict(checkpoint['model_state_dict'])
     else:
-        model.load_state_dict(checkpoint)
+        original_model.load_state_dict(checkpoint)
     
-    model.eval()
-    print("Model loaded successfully")
+    original_model.eval()
+    print("Original model loaded successfully")
     
-    # Save PyTorch model in HF format
-    torch.save({
-        'model_state_dict': model.state_dict(),
-        'model_class': 'BrainTumorCNN',
-        'num_classes': len(class_names),
-        'class_names': class_names
-    }, model_dir / "pytorch_model.bin")
+    # Create Transformers-compatible config
+    config = BrainTumorConfig(
+        num_classes=num_classes,
+        hidden_size=512,
+        dropout_rate=0.5,
+        dropout_rate_final=0.3,
+        image_size=224,
+        id2label={str(i): label for i, label in enumerate(class_names)},
+        label2id={label: str(i) for i, label in enumerate(class_names)}
+    )
     
-    # Create config.json
-    config = {
-        "architectures": ["BrainTumorCNN"],
-        "model_type": "brain-tumor-classifier",
-        "num_classes": len(class_names),
-        "id2label": {str(i): label for i, label in enumerate(class_names)},
-        "label2id": {label: str(i) for i, label in enumerate(class_names)},
-        "image_size": [224, 224],
-        "mean": [0.485, 0.456, 0.406],
-        "std": [0.229, 0.224, 0.225],
-        "torch_dtype": "float32",
-        "problem_type": "single_label_classification"
-    }
+    # Create new Transformers model
+    new_model = BrainTumorForImageClassification(config)
     
-    with open(model_dir / "config.json", "w") as f:
-        json.dump(config, f, indent=2)
+    # Copy weights from trained model to new model
+    print("Transferring weights...")
     
-    # Create preprocessing configuration
-    preprocessing_config = {
+    # Copy backbone weights (everything except the final classifier)
+    original_backbone_dict = {}
+    for name, param in original_model.base_model.named_parameters():
+        if not name.startswith('fc'):
+            original_backbone_dict[name] = param
+    
+    new_model.backbone.load_state_dict(original_backbone_dict, strict=False)
+    
+    # Copy classifier weights
+    original_classifier = original_model.base_model.fc
+    with torch.no_grad():
+        # Copy dropout and linear layers
+        new_model.classifier[1].weight.copy_(original_classifier[1].weight)  # First Linear
+        new_model.classifier[1].bias.copy_(original_classifier[1].bias)
+        new_model.classifier[4].weight.copy_(original_classifier[4].weight)  # Second Linear  
+        new_model.classifier[4].bias.copy_(original_classifier[4].bias)
+    
+    print("Weights transferred successfully")
+    
+    # Test that outputs match
+    test_input = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        original_output = original_model(test_input)
+        new_output = new_model(test_input)
+        
+        max_diff = torch.abs(original_output - new_output["logits"]).max().item()
+        print(f"Max difference between models: {max_diff:.6f}")
+        
+        if max_diff < 1e-4:
+            print("✅ Model conversion verified - outputs match!")
+        else:
+            print("⚠️  Warning: Model outputs differ slightly")
+    
+    # Save the model
+    print("Saving Transformers model...")
+    new_model.save_pretrained(model_dir)
+    config.save_pretrained(model_dir)
+    
+    # Create image processor config
+    processor_config = {
         "do_normalize": True,
         "do_resize": True,
         "image_mean": [0.485, 0.456, 0.406],
         "image_std": [0.229, 0.224, 0.225],
         "size": {"height": 224, "width": 224},
-        "resample": 3
+        "resample": 3,
+        "processor_class": "AutoImageProcessor"
     }
     
     with open(model_dir / "preprocessor_config.json", "w") as f:
-        json.dump(preprocessing_config, f, indent=2)
+        json.dump(processor_config, f, indent=2)
     
-    # Create README documentation
+    # Create enhanced README
     readme_content = f"""---
+pipeline_tag: image-classification
 license: apache-2.0
 tags:
 - medical
@@ -122,15 +222,17 @@ tags:
 - pytorch
 - computer-vision
 - healthcare
+- transformers
 datasets:
 - brain-tumor-mri-dataset
 metrics:
 - accuracy
+library_name: transformers
 model-index:
 - name: {MODEL_NAME}
   results:
   - task:
-      type: image-classification
+      type: image-classification  
       name: Brain Tumor Classification
     dataset:
       name: Brain Tumor MRI Dataset
@@ -152,144 +254,27 @@ This model classifies brain MRI scans into 4 categories:
 ## Model Details
 
 - **Architecture**: ResNet50 + Enhanced Classifier
+- **Framework**: PyTorch + Transformers
 - **Accuracy**: 94.2%
 - **Input Size**: 224x224x3
-- **Classes**: {len(class_names)}
+- **Classes**: {num_classes}
 
 ## Usage
-
 ```python
-from transformers import pipeline
-
-classifier = pipeline("image-classification", model="{REPO_ID}")
-result = classifier("path_to_mri_image.jpg")
-```
-
-## Important Note
-
-This model is for research and educational purposes only. Do not use for medical diagnosis. Always consult qualified healthcare professionals.
-
-## Training Details
-
-- Framework: PyTorch
-- Base Model: ResNet50 (ImageNet pretrained)
-- Optimizer: AdamW
-- Loss: CrossEntropyLoss with label smoothing
-- Data Augmentation: Rotation, flip, affine transforms
-
-## Classes
-
-{chr(10).join([f"- {i}: {name}" for i, name in enumerate(class_names)])}
-"""
-    
-    with open(model_dir / "README.md", "w") as f:
-        f.write(readme_content)
-    
-    # Create model implementation file
-    model_code = '''
+from transformers import AutoImageProcessor, AutoModelForImageClassification
+from PIL import Image
 import torch
-import torch.nn as nn
-from torchvision import models
-from transformers import PreTrainedModel, PretrainedConfig
 
-class BrainTumorConfig(PretrainedConfig):
-    model_type = "brain-tumor-classifier"
-    
-    def __init__(self, num_classes=4, **kwargs):
-        self.num_classes = num_classes
-        super().__init__(**kwargs)
+processor = AutoImageProcessor.from_pretrained("{REPO_ID}")
+model = AutoModelForImageClassification.from_pretrained("{REPO_ID}")
 
-class BrainTumorCNN(PreTrainedModel):
-    config_class = BrainTumorConfig
-    
-    def __init__(self, config):
-        super().__init__(config)
-        self.base_model = models.resnet50(weights=None)
-        
-        num_features = self.base_model.fc.in_features
-        self.base_model.fc = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(num_features, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, config.num_classes)
-        )
+image = Image.open("mri_scan.jpg")
+inputs = processor(image, return_tensors="pt")
 
-    def forward(self, pixel_values):
-        return {"logits": self.base_model(pixel_values)}
-'''
-    
-    with open(model_dir / "modeling_brain_tumor.py", "w") as f:
-        f.write(model_code)
-    
-    print("Model files created successfully")
-    print(f"Files saved in: {model_dir}")
-    
-    return model_dir, REPO_ID
+with torch.no_grad():
+    outputs = model(**inputs)
+    predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    predicted_class = predictions.argmax().item()
+    confidence = predictions.max().item()
 
-def upload_to_huggingface():
-    """Upload model to Hugging Face Hub"""
-    
-    model_dir, repo_id = create_hf_model_files()
-    if not model_dir:
-        return False
-    
-    print(f"\nUploading to Hugging Face Hub: {repo_id}")
-    
-    try:
-        # Create repository
-        api = HfApi()
-        
-        print("Creating repository...")
-        create_repo(repo_id, exist_ok=True, repo_type="model")
-        
-        # Upload all files
-        print("Uploading model files...")
-        api.upload_folder(
-            folder_path=model_dir,
-            repo_id=repo_id,
-            repo_type="model"
-        )
-        
-        print("Upload completed successfully")
-        print(f"Model available at: https://huggingface.co/{repo_id}")
-        print(f"API endpoint: https://api-inference.huggingface.co/models/{repo_id}")
-        
-        return repo_id
-        
-    except Exception as e:
-        print(f"Upload failed: {e}")
-        return False
-
-if __name__ == "__main__":
-    print("Brain Tumor Model Hugging Face Converter")
-    print("=" * 50)
-    
-    # Get username input
-    HF_USERNAME = input("Enter your Hugging Face username: ").strip()
-    if not HF_USERNAME:
-        print("Username required")
-        exit(1)
-    
-    # Update the username in the script
-    with open(__file__, 'r') as f:
-        content = f.read()
-    
-    content = content.replace('HF_USERNAME = "GiornoSolos"', f'HF_USERNAME = "{HF_USERNAME}"')
-    
-    with open(__file__, 'w') as f:
-        f.write(content)
-    
-    # Convert and upload
-    repo_id = upload_to_huggingface()
-    
-    if repo_id:
-        print(f"\nSUCCESS: Model is now available at:")
-        print(f"   https://huggingface.co/{repo_id}")
-        print(f"\nNext steps:")
-        print(f"   1. Set environment variable: HUGGINGFACE_API_TOKEN")
-        print(f"   2. Set environment variable: HUGGINGFACE_MODEL_ID={repo_id}")
-        print(f"   3. Update frontend API to use HF inference")
-        print(f"   4. Test the model on HF website")
-    else:
-        print("Upload failed. Check the errors above.")
+print(f"Predicted: {{model.config.id2label[str(predicted_class)]}} ({{confidence:.3f}})")
