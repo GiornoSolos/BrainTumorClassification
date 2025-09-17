@@ -1,20 +1,20 @@
 {
   "name": "brain-tumor-classifier",
   "version": "1.0.0",
-  "description": "This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).",
-  "main": "postcss.config.js",
+  "description": "AI-powered brain tumor classification using Hugging Face",
+  "main": "next.config.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
   },
-  "keywords": [],
+  "keywords": ["brain-tumor", "ai", "medical", "classification", "huggingface"],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@huggingface/inference": "^4.8.0",
+    "@huggingface/inference": "^2.8.1",
     "@radix-ui/react-progress": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@types/node": "^20.19.16",
@@ -26,7 +26,6 @@
     "framer-motion": "^12.23.13",
     "lucide-react": "^0.544.0",
     "next": "^15.5.3",
-    "onnxruntime-node": "^1.22.0",
     "postcss": "^8.5.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
