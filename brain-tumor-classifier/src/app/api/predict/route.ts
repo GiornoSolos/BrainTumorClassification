@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as ort from 'onnxruntime-node';
+import * as ort from 'onnxruntime-web';
 import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
 
 interface PredictionResult {
   class: string;
@@ -23,7 +21,9 @@ interface PreprocessingConfig {
   classes: string[];
 }
 
-// Preprocessing configuration - update these values to match training parameters
+// External model URL
+const MODEL_URL = "https://github.com/GiornoSolos/BrainTumorClassification/releases/download/v1.0.0/brain_tumor_model.onnx";
+
 const PREPROCESSING_CONFIG: PreprocessingConfig = {
   image_size: [224, 224],
   mean: [0.485, 0.456, 0.406],
@@ -31,10 +31,8 @@ const PREPROCESSING_CONFIG: PreprocessingConfig = {
   classes: ['glioma', 'meningioma', 'notumor', 'pituitary']
 };
 
-// Global variable for ONNX session caching
 let onnxSession: ort.InferenceSession | null = null;
 
-// Class-specific medical explanations
 const CLASS_EXPLANATIONS = {
   'glioma': 'Irregular mass with unclear boundaries detected, showing characteristics typical of glial cell tumors. The lesion exhibits heterogeneous signal intensity and potential surrounding edema. Gliomas are primary brain tumors requiring immediate medical evaluation.',
   'meningioma': 'Well-defined, round mass detected near brain membrane structures. Shows characteristics consistent with meningeal tissue growth, typically benign but requiring monitoring. Meningiomas arise from the protective membranes covering the brain.',
@@ -42,105 +40,72 @@ const CLASS_EXPLANATIONS = {
   'pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation. These tumors can impact various bodily functions.'
 };
 
-
-// URL to download the ONNX model if not bundled
-const MODEL_URL = "https://github.com/GiornoSolos/BrainTumorClassification/releases/download/v1.0.0/brain_tumor_model.onnx";
-
-
 async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; config: PreprocessingConfig }> {
   if (onnxSession) {
     return { session: onnxSession, config: PREPROCESSING_CONFIG };
   }
 
   try {
-    console.log('Loading ONNX model from external URL');
+    console.log('Loading ONNX model from external URL with onnxruntime-web');
 
-    const config = PREPROCESSING_CONFIG;
-    console.log('Using embedded preprocessing configuration:', config);
-
-    // Download model from GitHub Releases
-    console.log('Downloading model from:', MODEL_URL);
+    // Download model
     const response = await fetch(MODEL_URL);
-    
     if (!response.ok) {
-      throw new Error(`Failed to download model: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to download model: ${response.status}`);
     }
     
     const modelBuffer = await response.arrayBuffer();
     console.log(`Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
 
+    // Create session with onnxruntime-web
     onnxSession = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['CPUExecutionProvider'],
-      logSeverityLevel: 3,
+      executionProviders: ['cpu'], // Use CPU provider for onnxruntime-web
     });
 
-    console.log('ONNX session created successfully');
-    console.log('Model input metadata:', onnxSession.inputMetadata);
-    console.log('Model output metadata:', onnxSession.outputMetadata);
-    console.log('Classification classes:', config.classes);
-
-    return { session: onnxSession, config };
+    console.log('ONNX session created successfully with onnxruntime-web');
+    return { session: onnxSession, config: PREPROCESSING_CONFIG };
 
   } catch (error) {
     console.error('Model loading error:', error);
-    throw new Error(`Failed to load brain tumor classification model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to load model: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 async function preprocessImage(imageBuffer: Buffer, config: PreprocessingConfig): Promise<Float32Array> {
-  try {
-    const [height, width] = config.image_size;
-    
-    console.log(`Image preprocessing: resize to ${width}x${height}, normalize with specified parameters`);
-    
-    const imageInfo = await sharp(imageBuffer)
-      .resize(width, height, { 
-        fit: 'fill',
-        kernel: sharp.kernel.lanczos3 
-      })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+  const [height, width] = config.image_size;
+  
+  const imageInfo = await sharp(imageBuffer)
+    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-    const { data: rawData, info } = imageInfo;
-    
-    if (info.channels !== 3) {
-      throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
-    }
-
-    // Convert to Float32Array and apply normalization
-    const pixelCount = height * width;
-    const float32Data = new Float32Array(3 * pixelCount);
-    
-    const [meanR, meanG, meanB] = config.mean;
-    const [stdR, stdG, stdB] = config.std;
-
-    for (let i = 0; i < pixelCount; i++) {
-      // PyTorch CHW format (Channel, Height, Width)
-      const pixelIdx = i * 3;
-      
-      // Apply normalization: (pixel/255 - mean) / std
-      const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
-      const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
-      const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
-      
-      // Store in CHW format
-      float32Data[i] = r;
-      float32Data[pixelCount + i] = g;
-      float32Data[2 * pixelCount + i] = b;
-    }
-
-    console.log('Image preprocessing completed');
-    return float32Data;
-
-  } catch (error) {
-    console.error('Image preprocessing error:', error);
-    throw new Error('Failed to preprocess image for analysis');
+  const { data: rawData, info } = imageInfo;
+  
+  if (info.channels !== 3) {
+    throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
   }
+
+  const pixelCount = height * width;
+  const float32Data = new Float32Array(3 * pixelCount);
+  const [meanR, meanG, meanB] = config.mean;
+  const [stdR, stdG, stdB] = config.std;
+
+  for (let i = 0; i < pixelCount; i++) {
+    const pixelIdx = i * 3;
+    const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
+    const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
+    const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
+    
+    float32Data[i] = r;
+    float32Data[pixelCount + i] = g;
+    float32Data[2 * pixelCount + i] = b;
+  }
+
+  return float32Data;
 }
 
 function applyTemperatureScaling(logits: number[], temperature: number = 1.0): number[] {
-  // Apply temperature scaling and softmax
   const scaledLogits = logits.map(logit => logit / temperature);
   const maxLogit = Math.max(...scaledLogits);
   const expValues = scaledLogits.map(logit => Math.exp(logit - maxLogit));
@@ -153,17 +118,10 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
 
   try {
     const { session, config } = await loadModelAndConfig();
-    
-    console.log('Beginning image preprocessing');
     const inputData = await preprocessImage(imageBuffer, config);
     
-    // Create input tensor
     const inputTensor = new ort.Tensor('float32', inputData, [1, 3, config.image_size[0], config.image_size[1]]);
-    
-    console.log('Running model inference');
-    const feeds: Record<string, ort.Tensor> = {};
-    const inputNames = session.inputNames;
-    feeds[inputNames[0]] = inputTensor;
+    const feeds = { [session.inputNames[0]]: inputTensor };
     
     const results = await session.run(feeds);
     const output = results[session.outputNames[0]];
@@ -172,7 +130,6 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
       throw new Error('Invalid model output received');
     }
 
-    // Process model output
     const logits = Array.from(output.data as Float32Array);
     const probabilities = applyTemperatureScaling(logits);
     
@@ -180,20 +137,12 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
     const predictedClass = config.classes[maxProbIndex];
     const confidence = probabilities[maxProbIndex] * 100;
     
-    // Generate probability distribution for all classes
     const allProbabilities: Record<string, number> = {};
     config.classes.forEach((className, index) => {
-      const probability = probabilities[index] * 100;
-      allProbabilities[className] = Math.round(probability * 10) / 10;
+      allProbabilities[className] = Math.round(probabilities[index] * 100 * 10) / 10;
     });
 
     const processingTime = Date.now() - startTime;
-
-    console.log('Prediction results:');
-    console.log(`Predicted class: ${predictedClass}`);
-    console.log(`Confidence: ${confidence.toFixed(1)}%`);
-    console.log(`Processing time: ${processingTime}ms`);
-    console.log('All probabilities:', allProbabilities);
 
     return {
       class: predictedClass,
@@ -210,70 +159,37 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
 
   } catch (error) {
     console.error('Prediction error:', error);
-    throw new Error(`Brain tumor analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Prediction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('Brain tumor classification API request received');
-    
     const formData = await request.formData();
     const image = formData.get('image') as File;
 
-    // Input validation
     if (!image) {
-      return NextResponse.json(
-        { error: 'No image provided. Please upload an MRI scan for analysis.' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No image provided' }, { status: 400 });
     }
 
     if (!image.type.startsWith('image/')) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image file (JPG, PNG, DICOM, etc.).' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid file type' }, { status: 400 });
     }
 
     if (image.size > 10 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: 'File too large. Maximum size is 10MB for optimal processing.' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'File too large' }, { status: 400 });
     }
 
-    // Convert image to buffer
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     
-    console.log(`Processing image: ${image.name} (${(image.size / 1024).toFixed(1)} KB)`);
-
-    // Run model prediction
     const prediction = await predictBrainTumor(buffer);
-    
-    console.log('Model prediction completed successfully');
     return NextResponse.json(prediction);
 
   } catch (error) {
     console.error('API error:', error);
-    
-    // Return appropriate error responses
-    if (error instanceof Error && error.message.includes('model')) {
-      return NextResponse.json(
-        { 
-          error: 'Brain tumor classification model unavailable.',
-          details: 'The ResNet50 model could not be loaded. Please ensure model files are included in deployment.'
-        },
-        { status: 503 }
-      );
-    }
-
     return NextResponse.json(
-      { 
-        error: 'Failed to analyze brain scan. Please try again.',
-        details: error instanceof Error ? error.message : 'Unknown processing error occurred'
-      },
+      { error: 'Analysis failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
