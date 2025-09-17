@@ -74,8 +74,8 @@ class BrainTumorForImageClassification(PreTrainedModel):
             "logits": logits
         }
 
-# Original model class for loading trained weights
 class BrainTumorCNN(nn.Module):
+    """Original model class for loading trained weights"""
     def __init__(self, num_classes):
         super(BrainTumorCNN, self).__init__()
         self.base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
@@ -108,7 +108,7 @@ def convert_to_transformers_model():
     # Configuration
     HF_USERNAME = "GiornoSolos"
     MODEL_NAME = "brain-tumor-classifier"
-    REPO_ID = f"{HF_USERNAME}/{MODEL_NAME}"
+    REPO_ID = HF_USERNAME + "/" + MODEL_NAME
     
     # Class names
     class_names = ["glioma", "meningioma", "notumor", "pituitary"]
@@ -125,10 +125,10 @@ def convert_to_transformers_model():
         model_path = "models/best_brain_tumor_model.pth"
     
     if not os.path.exists(model_path):
-        print(f"ERROR: Model file not found at {model_path}")
+        print("ERROR: Model file not found at " + str(model_path))
         return False
     
-    print(f"Converting model from: {model_path}")
+    print("Converting model from: " + str(model_path))
     
     # Load original trained model
     original_model = BrainTumorCNN(num_classes)
@@ -185,12 +185,12 @@ def convert_to_transformers_model():
         new_output = new_model(test_input)
         
         max_diff = torch.abs(original_output - new_output["logits"]).max().item()
-        print(f"Max difference between models: {max_diff:.6f}")
+        print("Max difference between models: " + str(max_diff))
         
         if max_diff < 1e-4:
-            print("✅ Model conversion verified - outputs match!")
+            print("Model conversion verified - outputs match!")
         else:
-            print("⚠️  Warning: Model outputs differ slightly")
+            print("Warning: Model outputs differ slightly")
     
     # Save the model
     print("Saving Transformers model...")
@@ -211,8 +211,9 @@ def convert_to_transformers_model():
     with open(model_dir / "preprocessor_config.json", "w") as f:
         json.dump(processor_config, f, indent=2)
     
-    # Create enhanced README
-    readme_content = f"""---
+
+# Create simple README to avoid syntax issues
+    readme_content = '''---
 pipeline_tag: image-classification
 license: apache-2.0
 tags:
@@ -220,61 +221,24 @@ tags:
 - brain-tumor
 - classification
 - pytorch
-- computer-vision
-- healthcare
-- transformers
-datasets:
-- brain-tumor-mri-dataset
-metrics:
-- accuracy
 library_name: transformers
-model-index:
-- name: {MODEL_NAME}
-  results:
-  - task:
-      type: image-classification  
-      name: Brain Tumor Classification
-    dataset:
-      name: Brain Tumor MRI Dataset
-      type: brain-tumor-mri-dataset
-    metrics:
-    - type: accuracy
-      value: 0.942
-      name: Accuracy
 ---
 
 # Brain Tumor Classification Model
 
 This model classifies brain MRI scans into 4 categories:
-- **Glioma**: Glial cell tumors
-- **Meningioma**: Meningeal tissue tumors  
-- **No Tumor**: Normal brain tissue
-- **Pituitary**: Pituitary gland tumors
+- Glioma: Glial cell tumors
+- Meningioma: Meningeal tissue tumors  
+- No Tumor: Normal brain tissue
+- Pituitary: Pituitary gland tumors
 
 ## Model Details
+- Architecture: ResNet50 + Enhanced Classifier
+- Accuracy: 94.2%
+- Input Size: 224x224x3
+- Classes: 4
 
-- **Architecture**: ResNet50 + Enhanced Classifier
-- **Framework**: PyTorch + Transformers
-- **Accuracy**: 94.2%
-- **Input Size**: 224x224x3
-- **Classes**: {num_classes}
-
-## Usage
-```python
-from transformers import AutoImageProcessor, AutoModelForImageClassification
-from PIL import Image
-import torch
-
-processor = AutoImageProcessor.from_pretrained("{REPO_ID}")
-model = AutoModelForImageClassification.from_pretrained("{REPO_ID}")
-
-image = Image.open("mri_scan.jpg")
-inputs = processor(image, return_tensors="pt")
-
-with torch.no_grad():
-    outputs = model(**inputs)
-    predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    predicted_class = predictions.argmax().item()
-    confidence = predictions.max().item()
-
-print(f"Predicted: {{model.config.id2label[str(predicted_class)]}} ({{confidence:.3f}})")
+## Important Note
+This model is for research and educational purposes only. 
+Do not use for medical diagnosis.
+'''
