@@ -1,325 +1,316 @@
-import { NextRequest, NextResponse } from 'next/server';
-import * as ort from 'onnxruntime-node';
-import sharp from 'sharp';
+'use client';
+
+import { useState, useCallback } from 'react';
+import { Upload, X, FileImage, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import Image from 'next/image';
+import Link from 'next/link';
 
 interface PredictionResult {
   class: string;
   confidence: number;
   explanation: string;
-  processing_time: number;
-  all_probabilities: Record<string, number>;
-  model_info: {
+  processing_time?: number;
+  all_probabilities?: Record<string, number>;
+  model_info?: {
     architecture: string;
     accuracy: string;
   };
 }
 
-interface PreprocessingConfig {
-  image_size: [number, number];
-  mean: [number, number, number];
-  std: [number, number, number];
-  classes: string[];
-}
+export default function ImageUpload() {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<PredictionResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-// External model URL - update this with your actual GitHub release URL
-const MODEL_URL = "https://github.com/GiornoSolos/BrainTumorClassification/releases/download/v1.0.0/brain_tumor_model.onnx";
-
-// Preprocessing configuration matching training parameters
-const PREPROCESSING_CONFIG: PreprocessingConfig = {
-  image_size: [224, 224],
-  mean: [0.485, 0.456, 0.406],
-  std: [0.229, 0.224, 0.225],
-  classes: ['glioma', 'meningioma', 'notumor', 'pituitary']
-};
-
-// Global variable for ONNX session caching
-let onnxSession: ort.InferenceSession | null = null;
-
-// Class-specific medical explanations
-const CLASS_EXPLANATIONS = {
-  'glioma': 'Irregular mass with unclear boundaries detected, showing characteristics typical of glial cell tumors. The lesion exhibits heterogeneous signal intensity and potential surrounding edema. Gliomas are primary brain tumors requiring immediate medical evaluation.',
-  'meningioma': 'Well-defined, round mass detected near brain membrane structures. Shows characteristics consistent with meningeal tissue growth, typically benign but requiring monitoring. Meningiomas arise from the protective membranes covering the brain.',
-  'notumor': 'No abnormal tissue masses detected in this MRI scan. Brain structure appears normal with typical gray and white matter distribution. All anatomical regions show expected characteristics for healthy brain tissue.',
-  'pituitary': 'Mass detected in the pituitary gland region. Shows characteristics of pituitary adenoma with typical signal patterns. May affect hormone production and requires endocrine evaluation. These tumors can impact various bodily functions.'
-};
-
-async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; config: PreprocessingConfig }> {
-  if (onnxSession) {
-    console.log('Using cached ONNX session');
-    return { session: onnxSession, config: PREPROCESSING_CONFIG };
-  }
-
-  try {
-    console.log('Loading ONNX model from external URL');
-    console.log('Model URL:', MODEL_URL);
-
-    const config = PREPROCESSING_CONFIG;
-    console.log('Using embedded preprocessing configuration:', config);
-
-    // Download model from GitHub Releases with timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
-
-    const response = await fetch(MODEL_URL, {
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to download model: ${response.status} ${response.statusText}`);
-    }
-    
-    const modelBuffer = await response.arrayBuffer();
-    console.log(`Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
-
-    onnxSession = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['CPUExecutionProvider'],
-      logSeverityLevel: 3,
-    });
-
-    console.log('ONNX session created successfully');
-    console.log('Model input metadata:', onnxSession.inputMetadata);
-    console.log('Model output metadata:', onnxSession.outputMetadata);
-    console.log('Classification classes:', config.classes);
-
-    return { session: onnxSession, config };
-
-  } catch (error) {
-    console.error('Model loading error:', error);
-    
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        throw new Error('Model download timed out. Please try again.');
-      } else if (error.message.includes('fetch')) {
-        throw new Error('Failed to download model from GitHub. Please check your internet connection.');
-      }
-    }
-    
-    throw new Error(`Failed to load brain tumor classification model: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-async function preprocessImage(imageBuffer: Buffer, config: PreprocessingConfig): Promise<Float32Array> {
-  try {
-    const [height, width] = config.image_size;
-    
-    console.log(`Image preprocessing: resize to ${width}x${height}, normalize with specified parameters`);
-    
-    const imageInfo = await sharp(imageBuffer)
-      .resize(width, height, { 
-        fit: 'fill',
-        kernel: sharp.kernel.lanczos3 
-      })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-
-    const { data: rawData, info } = imageInfo;
-    
-    if (info.channels !== 3) {
-      throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    if (!selectedFile.type.startsWith('image/')) {
+      setError('Please select a valid image file');
+      return;
     }
 
-    // Convert to Float32Array and apply normalization
-    const pixelCount = height * width;
-    const float32Data = new Float32Array(3 * pixelCount);
-    
-    const [meanR, meanG, meanB] = config.mean;
-    const [stdR, stdG, stdB] = config.std;
-
-    for (let i = 0; i < pixelCount; i++) {
-      // PyTorch CHW format (Channel, Height, Width)
-      const pixelIdx = i * 3;
-      
-      // Apply normalization: (pixel/255 - mean) / std
-      const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
-      const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
-      const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
-      
-      // Store in CHW format
-      float32Data[i] = r;
-      float32Data[pixelCount + i] = g;
-      float32Data[2 * pixelCount + i] = b;
+    if (selectedFile.size > 10 * 1024 * 1024) { // 10MB limit
+      setError('File size must be less than 10MB');
+      return;
     }
 
-    console.log('Image preprocessing completed');
-    return float32Data;
+    setFile(selectedFile);
+    setError(null);
+    setResult(null);
 
-  } catch (error) {
-    console.error('Image preprocessing error:', error);
-    throw new Error('Failed to preprocess image for analysis');
-  }
-}
-
-function applyTemperatureScaling(logits: number[], temperature: number = 1.0): number[] {
-  // Apply temperature scaling and softmax
-  const scaledLogits = logits.map(logit => logit / temperature);
-  const maxLogit = Math.max(...scaledLogits);
-  const expValues = scaledLogits.map(logit => Math.exp(logit - maxLogit));
-  const sumExp = expValues.reduce((sum, val) => sum + val, 0);
-  return expValues.map(val => val / sumExp);
-}
-
-async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult> {
-  const startTime = Date.now();
-
-  try {
-    const { session, config } = await loadModelAndConfig();
-    
-    console.log('Beginning image preprocessing');
-    const inputData = await preprocessImage(imageBuffer, config);
-    
-    // Create input tensor
-    const inputTensor = new ort.Tensor('float32', inputData, [1, 3, config.image_size[0], config.image_size[1]]);
-    
-    console.log('Running model inference');
-    const feeds: Record<string, ort.Tensor> = {};
-    const inputNames = session.inputNames;
-    feeds[inputNames[0]] = inputTensor;
-    
-    const results = await session.run(feeds);
-    const output = results[session.outputNames[0]];
-    
-    if (!output || !output.data) {
-      throw new Error('Invalid model output received');
-    }
-
-    // Process model output
-    const logits = Array.from(output.data as Float32Array);
-    const probabilities = applyTemperatureScaling(logits);
-    
-    const maxProbIndex = probabilities.indexOf(Math.max(...probabilities));
-    const predictedClass = config.classes[maxProbIndex];
-    const confidence = probabilities[maxProbIndex] * 100;
-    
-    // Generate probability distribution for all classes
-    const allProbabilities: Record<string, number> = {};
-    config.classes.forEach((className, index) => {
-      const probability = probabilities[index] * 100;
-      allProbabilities[className] = Math.round(probability * 10) / 10;
-    });
-
-    const processingTime = Date.now() - startTime;
-
-    console.log('Prediction results:');
-    console.log(`Predicted class: ${predictedClass}`);
-    console.log(`Confidence: ${confidence.toFixed(1)}%`);
-    console.log(`Processing time: ${processingTime}ms`);
-    console.log('All probabilities:', allProbabilities);
-
-    return {
-      class: predictedClass,
-      confidence: Math.round(confidence * 10) / 10,
-      explanation: CLASS_EXPLANATIONS[predictedClass as keyof typeof CLASS_EXPLANATIONS] || 
-                  `Brain tumor classification result: ${predictedClass}`,
-      processing_time: processingTime,
-      all_probabilities: allProbabilities,
-      model_info: {
-        architecture: "ResNet50 + Enhanced Classifier",
-        accuracy: "94.2%"
-      }
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPreview(e.target?.result as string);
     };
+    reader.readAsDataURL(selectedFile);
+  }, []);
 
-  } catch (error) {
-    console.error('Prediction error:', error);
-    throw new Error(`Brain tumor analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) handleFileSelect(droppedFile);
+  }, [handleFileSelect]);
 
-export async function POST(request: NextRequest) {
-  try {
-    console.log('Brain tumor classification API request received');
-    
-    const formData = await request.formData();
-    const image = formData.get('image') as File;
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) handleFileSelect(selectedFile);
+  };
 
-    // Input validation
-    if (!image) {
-      return NextResponse.json(
-        { error: 'No image provided. Please upload an MRI scan for analysis.' },
-        { status: 400 }
-      );
-    }
+  const analyzeImage = async () => {
+    if (!file) return;
 
-    if (!image.type.startsWith('image/')) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image file (JPG, PNG, DICOM, etc.).' },
-        { status: 400 }
-      );
-    }
+    setLoading(true);
+    setError(null);
 
-    if (image.size > 10 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: 'File too large. Maximum size is 10MB for optimal processing.' },
-        { status: 400 }
-      );
-    }
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
 
-    // Convert image to buffer
-    const bytes = await image.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    
-    console.log(`Processing image: ${image.name} (${(image.size / 1024).toFixed(1)} KB)`);
+      const response = await fetch('/api/predict', {
+        method: 'POST',
+        body: formData,
+      });
 
-    // Run model prediction
-    const prediction = await predictBrainTumor(buffer);
-    
-    console.log('Model prediction completed successfully');
-    return NextResponse.json(prediction);
-
-  } catch (error) {
-    console.error('API error:', error);
-    
-    // Return appropriate error responses
-    if (error instanceof Error) {
-      if (error.message.includes('download') || error.message.includes('fetch')) {
-        return NextResponse.json(
-          { 
-            error: 'Failed to load classification model.',
-            details: 'Could not download model from external source. Please try again.'
-          },
-          { status: 503 }
-        );
-      } else if (error.message.includes('timeout')) {
-        return NextResponse.json(
-          { 
-            error: 'Model loading timed out.',
-            details: 'The model download took too long. Please try again.'
-          },
-          { status: 504 }
-        );
-      } else if (error.message.includes('model')) {
-        return NextResponse.json(
-          { 
-            error: 'Brain tumor classification model unavailable.',
-            details: 'The ResNet50 model could not be loaded. Please ensure model files are accessible.'
-          },
-          { status: 503 }
-        );
+      if (!response.ok) {
+        throw new Error('Analysis failed');
       }
+
+      const result = await response.json();
+      setResult(result);
+    } catch {
+      setError('Failed to analyze image. Please try again.');
+    } finally {
+      setLoading(false);
     }
+  };
 
-    return NextResponse.json(
-      { 
-        error: 'Failed to analyze brain scan. Please try again.',
-        details: error instanceof Error ? error.message : 'Unknown processing error occurred'
-      },
-      { status: 500 }
-    );
-  }
+  const resetUpload = () => {
+    setFile(null);
+    setPreview(null);
+    setResult(null);
+    setError(null);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800">
+      {/* Navigation */}
+      <nav className="flex items-center justify-between p-6 max-w-7xl mx-auto">
+        <Link href="/" className="flex items-center space-x-2 text-blue-600 hover:text-blue-700">
+          <ArrowLeft className="h-5 w-5" />
+          <span>Back to Home</span>
+        </Link>
+        <div className="flex items-center space-x-2">
+          <span className="text-xl font-bold text-gray-900 dark:text-white">NeuroClassify</span>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto p-6 space-y-8">
+        <div className="text-center space-y-4">
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
+            Brain Tumor Classifier
+          </h1>
+          <p className="text-lg text-gray-600 dark:text-gray-300">
+            Upload an MRI scan for instant AI-powered analysis
+          </p>
+        </div>
+
+        {/* Upload Area */}
+        <Card className="p-8 bg-white dark:bg-gray-800 shadow-xl">
+          {!preview ? (
+            <div
+              onDrop={handleDrop}
+              onDragOver={(e) => e.preventDefault()}
+              className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-12 text-center hover:border-blue-400 transition-colors"
+            >
+              <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                Upload MRI Scan
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 mb-4">
+                Drag and drop an image, or click to browse
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileInput}
+                className="hidden"
+                id="file-upload"
+              />
+              <Button 
+                variant="outline" 
+                className="cursor-pointer"
+                onClick={() => document.getElementById('file-upload')?.click()}
+              >
+                <FileImage className="mr-2 h-4 w-4" />
+                Choose File
+              </Button>
+              <p className="text-xs text-gray-400 mt-2">
+                Supports: JPG, PNG, DICOM • Max size: 10MB
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Image Preview */}
+              <div className="relative">
+                <Image
+                  src={preview}
+                  alt="MRI Preview"
+                  width={400}
+                  height={400}
+                  className="w-full max-w-md mx-auto rounded-lg shadow-lg object-contain"
+                />
+                <button
+                  onClick={resetUpload}
+                  className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* File Info */}
+              <div className="text-center space-y-2">
+                <p className="font-medium text-gray-900 dark:text-white">
+                  {file?.name}
+                </p>
+                <p className="text-sm text-gray-500">
+                  {((file?.size ?? 0) / 1024 / 1024).toFixed(2)} MB
+                </p>
+              </div>
+
+              {/* Analyze Button */}
+              <div className="text-center">
+                <Button
+                  onClick={analyzeImage}
+                  disabled={loading}
+                  size="lg"
+                  className="bg-blue-500 hover:bg-blue-600 text-white"
+                >
+                  {loading ? 'Analyzing...' : 'Analyze Image'}
+                </Button>
+              </div>
+
+              {/* Loading Progress */}
+              {loading && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
+                    <span>Processing image...</span>
+                    <span>AI Analysis in progress</span>
+                  </div>
+                  <Progress value={85} className="w-full" />
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Error Display */}
+        {error && (
+          <Card className="p-4 border-red-200 bg-red-50 dark:bg-red-900/20 border">
+            <div className="flex items-center space-x-2 text-red-600 dark:text-red-400">
+              <AlertCircle className="h-5 w-5" />
+              <span>{error}</span>
+            </div>
+          </Card>
+        )}
+
+        {/* Results Display */}
+        {result && (
+          <Card className="p-6 space-y-6 bg-white dark:bg-gray-800 shadow-xl">
+            <div className="flex items-center space-x-2">
+              <CheckCircle className="h-6 w-6 text-green-500" />
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Analysis Complete
+              </h3>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                    Classification
+                  </label>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <Badge
+                      variant={result.class === 'No Tumor' ? 'default' : 'destructive'}
+                      className="text-lg px-3 py-1"
+                    >
+                      {result.class}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                    Confidence Score
+                  </label>
+                  <div className="mt-1">
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="font-medium">{result.confidence.toFixed(1)}%</span>
+                      <span className="text-gray-500">Primary Prediction</span>
+                    </div>
+                    <Progress value={result.confidence} className="h-2" />
+                  </div>
+                </div>
+
+                {result.all_probabilities && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2 block">
+                      All Probabilities
+                    </label>
+                    <div className="space-y-2">
+                      {Object.entries(result.all_probabilities).map(([className, probability]) => (
+                        <div key={className} className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">{className}</span>
+                          <div className="flex items-center space-x-2">
+                            <div className="w-20 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                              <div 
+                                className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                                style={{ width: `${probability}%` }}
+                              ></div>
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white w-12 text-right">
+                              {probability.toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {result.processing_time && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Analysis completed in {result.processing_time}ms
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                  Explanation
+                </label>
+                <p className="mt-1 text-gray-700 dark:text-gray-300 leading-relaxed">
+                  {result.explanation}
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                 This tool is for research purposes only and should not be used for medical diagnosis. 
+                Please consult a qualified healthcare professional for medical advice.
+              </p>
+            </div>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
 }
-
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
-}
-
-export const runtime = 'nodejs';
-export const maxDuration = 60;
