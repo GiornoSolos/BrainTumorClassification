@@ -10,7 +10,13 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit"
   },
-  "keywords": ["brain-tumor", "ai", "medical", "classification", "huggingface"],
+  "keywords": [
+    "brain-tumor",
+    "ai",
+    "medical",
+    "classification",
+    "huggingface"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
