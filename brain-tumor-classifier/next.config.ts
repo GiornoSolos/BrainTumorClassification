@@ -1,36 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['onnxruntime-node', 'sharp'],
-  },
-  
-  // Optimize for Vercel serverless functions
-  webpack: (config, { dev, isServer }) => {
-    if (isServer) {
-      // Externalize onnxruntime-node to prevent bundling issues
-      config.externals = config.externals || [];
-      config.externals.push('onnxruntime-node');
-      
-      // Configure memory management
-      config.optimization = config.optimization || {};
-      config.optimization.nodeEnv = false;
-    }
-    
-    return config;
-  },
-  
-  // API route configuration for better memory management
-  api: {
-    responseLimit: false,
-  },
-  
-  // Reduce build size and memory usage
-  swcMinify: true,
-  
-  // Image optimization
+  // Image optimization configuration
   images: {
+    // Modern image formats for better performance
     formats: ['image/webp', 'image/avif'],
+    // You can also add other image optimization settings:
+    // deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+    // imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    // domains: ['example.com'], // if loading images from external domains
   },
 };
 

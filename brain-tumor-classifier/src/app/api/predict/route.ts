@@ -43,12 +43,60 @@ async function classifyBrainTumor(imageBuffer: Buffer): Promise<PredictionResult
 
   try {
     console.log('Sending image to Hugging Face for classification...');
+    console.log('Model ID:', MODEL_ID);
+    console.log('Image buffer size:', imageBuffer.length);
     
-    // Use Hugging Face Inference API
-    const result = await hf.imageClassification({
-      data: imageBuffer,
-      model: MODEL_ID
-    });
+    // Try multiple approaches for image data
+    let result;
+    
+    try {
+      // Method 1: Direct buffer (most reliable)
+      console.log('Trying direct buffer approach...');
+      result = await hf.imageClassification({
+        data: imageBuffer,
+        model: MODEL_ID,
+        options: {
+          wait_for_model: true,
+          use_cache: false
+        }
+      });
+    } catch (bufferError) {
+      console.log('Direct buffer failed, trying Blob approach...');
+      
+      try {
+        // Method 2: Convert to Blob
+        const imageBlob = new Blob([imageBuffer], { type: 'image/jpeg' });
+        result = await hf.imageClassification({
+          data: imageBlob,
+          model: MODEL_ID,
+          options: {
+            wait_for_model: true,
+            use_cache: false
+          }
+        });
+      } catch (blobError) {
+        console.log('Blob approach failed, trying direct fetch...');
+        
+        // Method 3: Direct fetch to Hugging Face API
+        const response = await fetch(
+          `https://api-inference.huggingface.co/models/${MODEL_ID}`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+              'Content-Type': 'application/octet-stream',
+            },
+            body: imageBuffer,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`API request failed: ${response.status}`);
+        }
+
+        result = await response.json();
+      }
+    }
 
     console.log('Hugging Face result:', result);
 
@@ -107,12 +155,16 @@ async function classifyBrainTumor(imageBuffer: Buffer): Promise<PredictionResult
     
     // Handle common Hugging Face errors
     if (error instanceof Error) {
-      if (error.message.includes('Model not found')) {
+      if (error.message.includes('Model not found') || error.message.includes('404')) {
         throw new Error('Brain tumor classification model not found. Please check model deployment.');
-      } else if (error.message.includes('rate limit')) {
+      } else if (error.message.includes('rate limit') || error.message.includes('429')) {
         throw new Error('Service temporarily unavailable due to high demand. Please try again in a moment.');
-      } else if (error.message.includes('authentication')) {
+      } else if (error.message.includes('authentication') || error.message.includes('401')) {
         throw new Error('Model authentication failed. Please check configuration.');
+      } else if (error.message.includes('loading')) {
+        throw new Error('Model is currently loading. Please try again in a few moments.');
+      } else if (error.message.includes('timeout')) {
+        throw new Error('Request timed out. Please try again.');
       }
     }
     
@@ -124,11 +176,22 @@ export async function POST(request: NextRequest) {
   try {
     // Check for required environment variables
     if (!process.env.HUGGINGFACE_API_TOKEN) {
+      console.error('HUGGINGFACE_API_TOKEN not found in environment variables');
       return NextResponse.json(
         { error: 'Hugging Face API token not configured' }, 
         { status: 500 }
       );
     }
+
+    if (!process.env.HUGGINGFACE_MODEL_ID && !MODEL_ID.includes('/')) {
+      console.error('HUGGINGFACE_MODEL_ID not properly configured');
+      return NextResponse.json(
+        { error: 'Hugging Face model ID not configured' }, 
+        { status: 500 }
+      );
+    }
+
+    console.log('Using model ID:', MODEL_ID);
 
     const formData = await request.formData();
     const image = formData.get('image') as File;
@@ -147,6 +210,8 @@ export async function POST(request: NextRequest) {
 
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
+    
+    console.log('Processing image:', image.name, 'Size:', image.size, 'Type:', image.type);
     
     const prediction = await classifyBrainTumor(buffer);
     
