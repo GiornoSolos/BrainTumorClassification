@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-node';
 import sharp from 'sharp';
 
 interface PredictionResult {
@@ -46,9 +46,9 @@ async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; co
   }
 
   try {
-    console.log('Loading ONNX model from external URL with onnxruntime-web');
+    console.log('Loading ONNX model from external URL with onnxruntime-node');
 
-    // Download model
+    // Download model with memory optimization
     const response = await fetch(MODEL_URL);
     if (!response.ok) {
       throw new Error(`Failed to download model: ${response.status}`);
@@ -57,12 +57,22 @@ async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; co
     const modelBuffer = await response.arrayBuffer();
     console.log(`Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
 
-    // Create session with onnxruntime-web
+    // Create session with onnxruntime-node optimized for Vercel
     onnxSession = await ort.InferenceSession.create(modelBuffer, {
-      executionProviders: ['cpu'], // Use CPU provider for onnxruntime-web
+      executionProviders: ['cpu'],
+      enableCpuMemArena: false, // Disable memory arena to reduce memory usage
+      enableMemPattern: false,  // Disable memory pattern optimization to save memory
+      executionMode: 'sequential', // Use sequential execution to save memory
+      graphOptimizationLevel: 'basic', // Use basic optimization to save memory
     });
 
-    console.log('ONNX session created successfully with onnxruntime-web');
+    console.log('ONNX session created successfully with onnxruntime-node');
+    
+    // Force garbage collection if available (helps with memory management)
+    if (global.gc) {
+      global.gc();
+    }
+    
     return { session: onnxSession, config: PREPROCESSING_CONFIG };
 
   } catch (error) {
@@ -74,35 +84,41 @@ async function loadModelAndConfig(): Promise<{ session: ort.InferenceSession; co
 async function preprocessImage(imageBuffer: Buffer, config: PreprocessingConfig): Promise<Float32Array> {
   const [height, width] = config.image_size;
   
-  const imageInfo = await sharp(imageBuffer)
-    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  try {
+    const imageInfo = await sharp(imageBuffer)
+      .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
 
-  const { data: rawData, info } = imageInfo;
-  
-  if (info.channels !== 3) {
-    throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
-  }
-
-  const pixelCount = height * width;
-  const float32Data = new Float32Array(3 * pixelCount);
-  const [meanR, meanG, meanB] = config.mean;
-  const [stdR, stdG, stdB] = config.std;
-
-  for (let i = 0; i < pixelCount; i++) {
-    const pixelIdx = i * 3;
-    const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
-    const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
-    const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
+    const { data: rawData, info } = imageInfo;
     
-    float32Data[i] = r;
-    float32Data[pixelCount + i] = g;
-    float32Data[2 * pixelCount + i] = b;
-  }
+    if (info.channels !== 3) {
+      throw new Error(`Expected 3 channels (RGB), got ${info.channels}`);
+    }
 
-  return float32Data;
+    const pixelCount = height * width;
+    const float32Data = new Float32Array(3 * pixelCount);
+    const [meanR, meanG, meanB] = config.mean;
+    const [stdR, stdG, stdB] = config.std;
+
+    // Optimized preprocessing loop
+    for (let i = 0; i < pixelCount; i++) {
+      const pixelIdx = i * 3;
+      const r = (rawData[pixelIdx] / 255.0 - meanR) / stdR;
+      const g = (rawData[pixelIdx + 1] / 255.0 - meanG) / stdG;  
+      const b = (rawData[pixelIdx + 2] / 255.0 - meanB) / stdB;
+      
+      float32Data[i] = r;
+      float32Data[pixelCount + i] = g;
+      float32Data[2 * pixelCount + i] = b;
+    }
+
+    return float32Data;
+  } catch (error) {
+    console.error('Image preprocessing error:', error);
+    throw new Error('Failed to preprocess image');
+  }
 }
 
 function applyTemperatureScaling(logits: number[], temperature: number = 1.0): number[] {
@@ -120,9 +136,11 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
     const { session, config } = await loadModelAndConfig();
     const inputData = await preprocessImage(imageBuffer, config);
     
+    // Create tensor with proper dimensions
     const inputTensor = new ort.Tensor('float32', inputData, [1, 3, config.image_size[0], config.image_size[1]]);
     const feeds = { [session.inputNames[0]]: inputTensor };
     
+    // Run inference
     const results = await session.run(feeds);
     const output = results[session.outputNames[0]];
     
@@ -143,6 +161,10 @@ async function predictBrainTumor(imageBuffer: Buffer): Promise<PredictionResult>
     });
 
     const processingTime = Date.now() - startTime;
+
+    // Clean up tensors to free memory
+    inputTensor.dispose?.();
+    output.dispose?.();
 
     return {
       class: predictedClass,
@@ -184,6 +206,12 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(bytes);
     
     const prediction = await predictBrainTumor(buffer);
+    
+    // Force garbage collection if available
+    if (global.gc) {
+      global.gc();
+    }
+    
     return NextResponse.json(prediction);
 
   } catch (error) {
